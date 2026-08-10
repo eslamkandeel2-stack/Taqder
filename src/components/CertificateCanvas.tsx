@@ -1,0 +1,3108 @@
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { CertificateData, ElementPositions, ElementStyles, FontOption } from '../types';
+import { generateQRCodeDataUrl, generateVerificationCode } from '../utils/qrUtils';
+import { getGradientCss } from '../utils/gradientUtils';
+import { getTodayHijriDate, getTodayGregorianDate } from '../utils/defaultSettings';
+import {
+  Award,
+  Star,
+  Trophy,
+  Crown,
+  Shield,
+  Heart,
+  Sparkles,
+  BookOpen,
+  Target,
+  Medal,
+  CheckCircle2,
+  Edit3,
+  FileText,
+  Maximize2,
+  Move,
+  RotateCcw,
+  RotateCw,
+  QrCode,
+  ShieldCheck,
+  Undo2,
+  Redo2,
+  ArrowUp,
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  ZoomIn,
+  ZoomOut
+} from 'lucide-react';
+
+interface Props {
+  data: CertificateData;
+  canvasRef?: React.RefObject<HTMLDivElement | null>;
+  isExporting?: boolean;
+  onUpdateEmojiPos?: (id: string, x: number, y: number) => void;
+  onUpdateData?: (newData: Partial<CertificateData>) => void;
+  onOpenVerificationModal?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
+  onUndo?: () => void;
+  onRedo?: () => void;
+}
+
+export const CertificateCanvas: React.FC<Props> = ({
+  data,
+  canvasRef,
+  isExporting = false,
+  onUpdateEmojiPos,
+  onUpdateData,
+  onOpenVerificationModal,
+  canUndo = false,
+  canRedo = false,
+  onUndo,
+  onRedo
+}) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const fallbackCanvasRef = useRef<HTMLDivElement>(null);
+  const actualCanvasRef = canvasRef || fallbackCanvasRef;
+
+  const [containerWidth, setContainerWidth] = useState<number>(0);
+  const [zoomMode, setZoomMode] = useState<'fit' | '50' | '75' | '100' | '125' | '150'>('fit');
+  const [isDragModeActive, setIsDragModeActive] = useState<boolean>(false);
+  const [draggingKey, setDraggingKey] = useState<string | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [nudgeStep, setNudgeStep] = useState<number>(2);
+  const [qrDataUrl, setQrDataUrl] = useState<string>('');
+  const [activeGuides, setActiveGuides] = useState<{
+    vertical?: { xPercent: number; label: string };
+    horizontal?: { yPercent: number; label: string };
+  } | null>(null);
+
+  const getElementFriendlyName = (key: string): string => {
+    if (key.startsWith('emoji-')) {
+      const id = key.replace('emoji-', '');
+      const item = data.emojis?.find((e) => e.id === id);
+      return `ملصق (${item ? item.emoji : 'شكل'})`;
+    }
+    const names: Record<string, string> = {
+      titleBlock: 'العنوان الرئيس',
+      recipientBlock: 'اسم المكرّم',
+      appreciationBlock: 'نص التقدير',
+      signaturesBlock: 'قسم التوقيعات',
+      schoolHeader: 'ترويسة المدرسة',
+      logo: 'الشعار',
+      stamp: 'الختم الرسمي',
+      qrCode: 'رمز QR',
+      badge: 'وسام التميز',
+      dateLocation: 'التاريخ والمكان',
+      poemBlock: 'بيت الشعر / المقولة'
+    };
+    return names[key] || 'عنصر آخر';
+  };
+
+  // Precise movement nudge handler
+  const handleNudge = (direction: 'up' | 'down' | 'left' | 'right', customStep?: number) => {
+    if (!selectedKey) return;
+    const step = customStep ?? nudgeStep;
+
+    if (selectedKey.startsWith('emoji-')) {
+      const emojiId = selectedKey.replace('emoji-', '');
+      const emojiItem = data.emojis?.find((e) => e.id === emojiId);
+      if (emojiItem) {
+        let newX = emojiItem.x;
+        let newY = emojiItem.y;
+        // 1px pixel roughly equals 0.25% on canvas
+        const pctStep = step * 0.25;
+        if (direction === 'up') newY = Math.max(0, newY - pctStep);
+        if (direction === 'down') newY = Math.min(95, newY + pctStep);
+        if (direction === 'left') newX = Math.max(0, newX - pctStep);
+        if (direction === 'right') newX = Math.min(95, newX + pctStep);
+
+        const clampedX = Math.round(newX * 10) / 10;
+        const clampedY = Math.round(newY * 10) / 10;
+
+        if (onUpdateEmojiPos) {
+          onUpdateEmojiPos(emojiId, clampedX, clampedY);
+        } else if (onUpdateData && data.emojis) {
+          const updated = data.emojis.map((e) => (e.id === emojiId ? { ...e, x: clampedX, y: clampedY } : e));
+          onUpdateData({ emojis: updated });
+        }
+      }
+    } else {
+      const currentPos = data.positions?.[selectedKey as keyof ElementPositions] || { x: 0, y: 0 };
+      let newX = currentPos.x;
+      let newY = currentPos.y;
+
+      if (direction === 'up') newY -= step;
+      if (direction === 'down') newY += step;
+      if (direction === 'left') newX -= step;
+      if (direction === 'right') newX += step;
+
+      // Clamp values
+      newX = Math.max(-450, Math.min(450, newX));
+      newY = Math.max(-450, Math.min(450, newY));
+
+      if (selectedKey === 'badge' || selectedKey === 'stamp' || selectedKey === 'qrCode') {
+        newY = Math.min(0, newY);
+      } else if (selectedKey === 'signaturesBlock') {
+        newY = Math.max(-15, Math.min(5, newY));
+        newX = Math.max(-30, Math.min(30, newX));
+      }
+
+      if (onUpdateData) {
+        onUpdateData({
+          positions: {
+            ...(data.positions || {}),
+            [selectedKey]: { x: newX, y: newY }
+          }
+        });
+      }
+    }
+  };
+
+  // Keep reference to latest handleNudge for repeat timer
+  const handleNudgeRef = useRef(handleNudge);
+  useEffect(() => {
+    handleNudgeRef.current = handleNudge;
+  });
+
+  const repeatTimerRef = useRef<{ timeout?: ReturnType<typeof setTimeout>; interval?: ReturnType<typeof setInterval> }>({});
+
+  const stopNudgeRepeat = useCallback(() => {
+    if (repeatTimerRef.current.timeout) clearTimeout(repeatTimerRef.current.timeout);
+    if (repeatTimerRef.current.interval) clearInterval(repeatTimerRef.current.interval);
+    repeatTimerRef.current = {};
+  }, []);
+
+  const startNudgeRepeat = useCallback((direction: 'up' | 'down' | 'left' | 'right') => {
+    stopNudgeRepeat();
+    if (!selectedKey) return;
+
+    // Immediate nudge
+    handleNudgeRef.current(direction);
+
+    const handleGlobalRelease = () => {
+      stopNudgeRepeat();
+      window.removeEventListener('mouseup', handleGlobalRelease);
+      window.removeEventListener('touchend', handleGlobalRelease);
+    };
+    window.addEventListener('mouseup', handleGlobalRelease);
+    window.addEventListener('touchend', handleGlobalRelease);
+
+    // Initial delay then continuous repeat ticks
+    repeatTimerRef.current.timeout = setTimeout(() => {
+      repeatTimerRef.current.interval = setInterval(() => {
+        handleNudgeRef.current(direction);
+      }, 60);
+    }, 220);
+  }, [selectedKey, stopNudgeRepeat]);
+
+  // Clean up on unmount or selectedKey change
+  useEffect(() => {
+    return () => stopNudgeRepeat();
+  }, [selectedKey, stopNudgeRepeat]);
+
+  // Keyboard navigation for directional arrow keys
+  useEffect(() => {
+    if (!isDragModeActive || !selectedKey) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const activeElem = document.activeElement;
+      if (activeElem && (activeElem.tagName === 'INPUT' || activeElem.tagName === 'TEXTAREA' || (activeElem as HTMLElement).isContentEditable)) {
+        return;
+      }
+
+      const multiplier = e.shiftKey ? 5 : 1;
+      const step = nudgeStep * multiplier;
+
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        handleNudge('up', step);
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        handleNudge('down', step);
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        handleNudge('left', step);
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        handleNudge('right', step);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isDragModeActive, selectedKey, nudgeStep, data.positions, data.emojis]);
+
+  const dragStartRef = useRef<{
+    startX: number;
+    startY: number;
+    initialElemX: number;
+    initialElemY: number;
+  } | null>(null);
+
+  const verificationCode = data.verificationCode || generateVerificationCode(data.id);
+
+  // Measure container width dynamically to scale canvas to fit preview area
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const updateWidth = () => {
+      if (containerRef.current) {
+        setContainerWidth(containerRef.current.clientWidth);
+      }
+    };
+
+    updateWidth();
+    const resizeObserver = new ResizeObserver(updateWidth);
+    resizeObserver.observe(containerRef.current);
+
+    window.addEventListener('resize', updateWidth);
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener('resize', updateWidth);
+    };
+  }, []);
+
+  // Window-level mouse/touch event listeners for smooth dragging across entire window
+  useEffect(() => {
+    if (!draggingKey || !isDragModeActive) return;
+
+    const handlePointerMove = (e: MouseEvent | TouchEvent) => {
+      if (!actualCanvasRef.current || !dragStartRef.current) return;
+      const canvasRect = actualCanvasRef.current.getBoundingClientRect();
+      if (!canvasRect.width || !canvasRect.height) return;
+
+      const clientX = 'touches' in e ? (e as TouchEvent).touches[0].clientX : (e as MouseEvent).clientX;
+      const clientY = 'touches' in e ? (e as TouchEvent).touches[0].clientY : (e as MouseEvent).clientY;
+
+      const deltaXInPx = clientX - dragStartRef.current.startX;
+      const deltaYInPx = clientY - dragStartRef.current.startY;
+
+      const deltaXPercent = (deltaXInPx / canvasRect.width) * 100;
+      const deltaYPercent = (deltaYInPx / canvasRect.height) * 100;
+
+      // Clamp limits to guarantee elements stay inside frame
+      const maxX = 76;
+      const maxY = draggingKey === 'signaturesBlock' ? 70 : 75;
+
+      const newX = Math.round(Math.max(3, Math.min(maxX, dragStartRef.current.initialElemX + deltaXPercent)));
+      const newY = Math.round(Math.max(3, Math.min(maxY, dragStartRef.current.initialElemY + deltaYPercent)));
+
+      if (draggingKey.startsWith('emoji-')) {
+        const deltaXPercent = (deltaXInPx / canvasRect.width) * 100;
+        const deltaYPercent = (deltaYInPx / canvasRect.height) * 100;
+
+        const newX = Math.round(Math.max(3, Math.min(76, dragStartRef.current.initialElemX + deltaXPercent)));
+        const newY = Math.round(Math.max(3, Math.min(75, dragStartRef.current.initialElemY + deltaYPercent)));
+
+        const emojiId = draggingKey.replace('emoji-', '');
+        if (onUpdateEmojiPos) {
+          onUpdateEmojiPos(emojiId, newX, newY);
+        } else if (onUpdateData && data.emojis) {
+          const updated = data.emojis.map(item => item.id === emojiId ? { ...item, x: newX, y: newY } : item);
+          onUpdateData({ emojis: updated });
+        }
+      } else {
+        const currentScale = canvasRect.width / aspectInfo.baseWidth || 1;
+        const newDx = Math.round(dragStartRef.current.initialElemX + (deltaXInPx / currentScale));
+        const newDy = Math.round(dragStartRef.current.initialElemY + (deltaYInPx / currentScale));
+
+        // Clamp offsets so elements stay within canvas bounds
+        let clampedX = Math.max(-450, Math.min(450, newDx));
+        let clampedY = Math.max(-450, Math.min(450, newDy));
+
+        if (draggingKey === 'badge' || draggingKey === 'stamp' || draggingKey === 'qrCode') {
+          clampedY = Math.min(0, clampedY);
+        } else if (draggingKey === 'signaturesBlock') {
+          clampedY = Math.max(-15, Math.min(5, clampedY));
+          clampedX = Math.max(-30, Math.min(30, clampedX));
+        }
+
+        let finalX = clampedX;
+        let finalY = clampedY;
+
+        let vGuide: { xPercent: number; label: string } | undefined;
+        let hGuide: { yPercent: number; label: string } | undefined;
+
+        // Smart Guide 1: Vertical Center Alignment (X = 0)
+        if (Math.abs(clampedX) < 10) {
+          finalX = 0; // Snap to exact center!
+          vGuide = { xPercent: 50, label: 'محاذاة في منتصف اللوحة' };
+        }
+
+        // Smart Guide 2: Horizontal Base Alignment (Y = 0)
+        if (Math.abs(clampedY) < 10) {
+          finalY = 0; // Snap to baseline!
+          hGuide = { yPercent: 50, label: 'الموضع الرأسي الأصلي' };
+        }
+
+        // Smart Guide 3: Alignment with other positioned elements
+        if (data.positions) {
+          Object.entries(data.positions).forEach(([key, rawPos]) => {
+            const pos = rawPos as { x: number; y: number } | undefined;
+            if (key !== draggingKey && pos && typeof pos.x === 'number' && typeof pos.y === 'number') {
+              // Check X alignment with another element
+              if (Math.abs(clampedX - pos.x) < 8) {
+                finalX = pos.x;
+                const percent = 50 + (pos.x / aspectInfo.baseWidth) * 100;
+                vGuide = { xPercent: percent, label: `محاذاة مع (${getElementFriendlyName(key)})` };
+              }
+              // Check Y alignment with another element
+              if (Math.abs(clampedY - pos.y) < 8) {
+                finalY = pos.y;
+                const percent = 50 + (pos.y / aspectInfo.baseHeight) * 100;
+                hGuide = { yPercent: percent, label: `محاذاة مع (${getElementFriendlyName(key)})` };
+              }
+            }
+          });
+        }
+
+        if (vGuide || hGuide) {
+          setActiveGuides({ vertical: vGuide, horizontal: hGuide });
+        } else {
+          setActiveGuides(null);
+        }
+
+        if (onUpdateData) {
+          onUpdateData({
+            positions: {
+              ...(data.positions || {}),
+              [draggingKey]: { x: finalX, y: finalY }
+            }
+          });
+        }
+      }
+    };
+
+    const handlePointerUp = () => {
+      setDraggingKey(null);
+      dragStartRef.current = null;
+      setActiveGuides(null);
+    };
+
+    window.addEventListener('mousemove', handlePointerMove, { passive: true });
+    window.addEventListener('touchmove', handlePointerMove, { passive: true });
+    window.addEventListener('mouseup', handlePointerUp);
+    window.addEventListener('touchend', handlePointerUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handlePointerMove);
+      window.removeEventListener('touchmove', handlePointerMove);
+      window.removeEventListener('mouseup', handlePointerUp);
+      window.removeEventListener('touchend', handlePointerUp);
+    };
+  }, [draggingKey, isDragModeActive, data.emojis, data.positions, onUpdateData, onUpdateEmojiPos, actualCanvasRef]);
+
+  // Generate dynamic QR Code for certificate verification
+  useEffect(() => {
+    generateQRCodeDataUrl(`${window.location.origin}/verify?code=${verificationCode}`).then(url => {
+      if (url) setQrDataUrl(url);
+    });
+  }, [verificationCode]);
+
+  const handleStartDrag = (
+    e: React.MouseEvent | React.TouchEvent,
+    key: string,
+    targetElem?: HTMLElement | null
+  ) => {
+    if (isExporting || !isDragModeActive) return;
+
+    // Do NOT start drag if user clicked directly on an editable input/textarea or button
+    const target = e.target as HTMLElement;
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.closest('button'))) {
+      return;
+    }
+
+    e.stopPropagation();
+
+    if (!actualCanvasRef.current) return;
+    const canvasRect = actualCanvasRef.current.getBoundingClientRect();
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+
+    let initialElemX = 0;
+    let initialElemY = 0;
+
+    if (key.startsWith('emoji-')) {
+      const emojiId = key.replace('emoji-', '');
+      const emojiItem = data.emojis?.find((item) => item.id === emojiId);
+      if (emojiItem) {
+        initialElemX = emojiItem.x;
+        initialElemY = emojiItem.y;
+      }
+    } else {
+      const pos = data.positions?.[key as keyof ElementPositions];
+      if (pos) {
+        initialElemX = pos.x;
+        initialElemY = pos.y;
+      }
+    }
+
+    dragStartRef.current = {
+      startX: clientX,
+      startY: clientY,
+      initialElemX,
+      initialElemY,
+    };
+
+    setDraggingKey(key);
+    setSelectedKey(key);
+  };
+
+  const handleResetPositions = () => {
+    if (onUpdateData) {
+      onUpdateData({ positions: {} });
+    }
+  };
+
+  const getBadgeIcon = (iconName: string) => {
+    switch (iconName) {
+      case 'star': return <Star className="w-8 h-8" />;
+      case 'trophy': return <Trophy className="w-8 h-8" />;
+      case 'crown': return <Crown className="w-8 h-8" />;
+      case 'shield': return <Shield className="w-8 h-8" />;
+      case 'heart': return <Heart className="w-8 h-8" />;
+      case 'sparkles': return <Sparkles className="w-8 h-8" />;
+      case 'book': return <BookOpen className="w-8 h-8" />;
+      case 'target': return <Target className="w-8 h-8" />;
+      case 'medal': return <Medal className="w-8 h-8" />;
+      default: return <Award className="w-8 h-8" />;
+    }
+  };
+
+  const fontClass = {
+    'Cairo': "font-['Cairo',sans-serif]",
+    'Amiri': "font-['Amiri',serif]",
+    'Tajawal': "font-['Tajawal',sans-serif]",
+    'Almarai': "font-['Almarai',sans-serif]",
+    'Aref Ruqaa': "font-['Aref_Ruqaa',serif]",
+    'Reem Kufi': "font-['Reem_Kufi',sans-serif]",
+    'Changa': "font-['Changa',sans-serif]",
+    'El Messiri': "font-['El_Messiri',serif]",
+    'Lalezar': "font-['Lalezar',cursive]",
+    'Kufam': "font-['Kufam',sans-serif]",
+    'Scheherazade New': "font-['Scheherazade_New',serif]",
+    'Vazirmatn': "font-['Vazirmatn',sans-serif]",
+    'Harmattan': "font-['Harmattan',sans-serif]",
+    'Marhey': "font-['Marhey',cursive]",
+  }[data.fontFamily] || "font-['Cairo',sans-serif]";
+
+  const getElementFontClass = (fieldKey: keyof ElementStyles) => {
+    let customFont = data.elementStyles?.[fieldKey]?.fontFamily;
+    if (!customFont && fieldKey === 'schoolName') {
+      customFont = data.elementStyles?.schoolHeader?.fontFamily;
+    }
+    if (!customFont) {
+      customFont = data.fontFamily;
+    }
+    if (!customFont) return '';
+    return {
+      'Cairo': "font-['Cairo',sans-serif]",
+      'Amiri': "font-['Amiri',serif]",
+      'Tajawal': "font-['Tajawal',sans-serif]",
+      'Almarai': "font-['Almarai',sans-serif]",
+      'Aref Ruqaa': "font-['Aref_Ruqaa',serif]",
+      'Reem Kufi': "font-['Reem_Kufi',sans-serif]",
+      'Changa': "font-['Changa',sans-serif]",
+      'El Messiri': "font-['El_Messiri',serif]",
+      'Lalezar': "font-['Lalezar',cursive]",
+      'Kufam': "font-['Kufam',sans-serif]",
+      'Scheherazade New': "font-['Scheherazade_New',serif]",
+      'Vazirmatn': "font-['Vazirmatn',sans-serif]",
+      'Harmattan': "font-['Harmattan',sans-serif]",
+      'Marhey': "font-['Marhey',cursive]",
+    }[customFont] || '';
+  };
+
+  const getSignatureFontClass = (fontFamily?: string) => {
+    if (!fontFamily) return "font-['Aref_Ruqaa',serif]";
+    return {
+      'Aref Ruqaa': "font-['Aref_Ruqaa',serif]",
+      'Aref Ruqaa Ink': "font-['Aref_Ruqaa_Ink',serif]",
+      'Ruwudu': "font-['Ruwudu',serif]",
+      'Rakkas': "font-['Rakkas',cursive]",
+      'Lateef': "font-['Lateef',cursive]",
+      'Scheherazade New': "font-['Scheherazade_New',serif]",
+      'Marhey': "font-['Marhey',cursive]",
+      'Reem Kufi': "font-['Reem_Kufi',sans-serif]",
+      'Lalezar': "font-['Lalezar',cursive]",
+      'El Messiri': "font-['El_Messiri',sans-serif]",
+      'Amiri': "font-['Amiri',serif]",
+      'Great Vibes': "font-['Great_Vibes',cursive]",
+      'Dancing Script': "font-['Dancing_Script',cursive]",
+      'Caveat': "font-['Caveat',cursive]",
+      'Alex Brush': "font-['Alex_Brush',cursive]",
+    }[fontFamily] || "font-['Aref_Ruqaa',serif]";
+  };
+
+  const BASE_FONT_SIZES: Record<string, number> = {
+    title: 36,
+    subtitle: 18,
+    recipientIntro: 18,
+    studentName: 32,
+    grade: 16,
+    appreciationText: 18,
+    poemOrQuote: 16,
+    schoolHeader: 13,
+    schoolName: 16,
+    dateLocation: 14,
+    watermarkText: 60,
+  };
+
+  const getElementCssStyle = (fieldKey: keyof ElementStyles, defaultColor?: string) => {
+    let style = data.elementStyles?.[fieldKey];
+
+    // Fallback for schoolName from schoolHeader style if specific style overrides are missing
+    if (fieldKey === 'schoolName') {
+      const headerStyle = data.elementStyles?.schoolHeader;
+      style = {
+        fontFamily: style?.fontFamily || headerStyle?.fontFamily,
+        align: style?.align || headerStyle?.align || 'right',
+        color: style?.color || headerStyle?.color,
+        fontWeight: style?.fontWeight || headerStyle?.fontWeight || 'bold',
+        fontSize: style?.fontSize ?? (headerStyle?.fontSize ? Math.round(headerStyle.fontSize * 1.15) : 100),
+        letterSpacing: style?.letterSpacing ?? headerStyle?.letterSpacing,
+      };
+    }
+
+    const globalScale = data.fontSizeScale ?? 1.0;
+    const basePx = BASE_FONT_SIZES[fieldKey as string] || 16;
+    const elementScale = (style?.fontSize ?? 100) / 100;
+    const computedPx = Math.round(basePx * elementScale * globalScale);
+
+    // Calculate length of element's text to apply dynamic letter-spacing and line-height auto-scaling
+    const getFieldValue = (): string => {
+      switch (fieldKey) {
+        case 'studentName': return data.studentName || '';
+        case 'appreciationText': return data.appreciationText || '';
+        case 'poemOrQuote': return data.poemOrQuote || '';
+        case 'title': return data.title || '';
+        case 'subtitle': return data.subtitle || '';
+        case 'grade': return data.grade || '';
+        case 'schoolName': return data.schoolName || '';
+        case 'schoolHeader': return `${data.headerLine1 || ''} ${data.headerLine2 || ''} ${data.headerLine3 || ''} ${data.headerRightExtra || ''}`;
+        case 'recipientIntro': return data.recipientIntro || '';
+        case 'badgeTitle': return data.badgeTitle || '';
+        case 'dateLocation': return `${data.issuePlace || ''} ${data.issueDateHijri || ''} ${data.issueDateGregorian || ''}`;
+        default: return '';
+      }
+    };
+
+    const textVal = getFieldValue();
+    const textLen = textVal.trim().length;
+
+    // Dynamic line-height and letter-spacing auto adjustment to prevent text clipping
+    let dynamicLineHeight: string | undefined = undefined;
+    let dynamicLetterSpacing: string | undefined = style?.letterSpacing !== undefined ? `${style.letterSpacing}px` : undefined;
+    let autoScaleFactor = 1.0;
+
+    if (textLen > 0) {
+      if (fieldKey === 'appreciationText') {
+        if (textLen > 180) {
+          dynamicLineHeight = '1.3';
+          if (style?.letterSpacing === undefined) dynamicLetterSpacing = '-0.6px';
+          autoScaleFactor = 0.88;
+        } else if (textLen > 120) {
+          dynamicLineHeight = '1.42';
+          if (style?.letterSpacing === undefined) dynamicLetterSpacing = '-0.4px';
+          autoScaleFactor = 0.94;
+        } else if (textLen > 65) {
+          dynamicLineHeight = '1.58';
+          if (style?.letterSpacing === undefined) dynamicLetterSpacing = '-0.2px';
+        } else {
+          dynamicLineHeight = '1.5';
+        }
+      } else if (fieldKey === 'poemOrQuote') {
+        if (textLen > 90) {
+          dynamicLineHeight = '1.25';
+          if (style?.letterSpacing === undefined) dynamicLetterSpacing = '-0.6px';
+          autoScaleFactor = 0.90;
+        } else if (textLen > 45) {
+          dynamicLineHeight = '1.35';
+          if (style?.letterSpacing === undefined) dynamicLetterSpacing = '-0.3px';
+        } else {
+          dynamicLineHeight = '1.4';
+        }
+      } else if (fieldKey === 'studentName') {
+        if (textLen > 38) {
+          dynamicLineHeight = '1.15';
+          if (style?.letterSpacing === undefined) dynamicLetterSpacing = '-0.8px';
+          autoScaleFactor = 0.84;
+        } else if (textLen > 24) {
+          dynamicLineHeight = '1.25';
+          if (style?.letterSpacing === undefined) dynamicLetterSpacing = '-0.4px';
+          autoScaleFactor = 0.92;
+        } else {
+          dynamicLineHeight = '1.35';
+        }
+      } else if (fieldKey === 'title' || fieldKey === 'subtitle') {
+        if (textLen > 30) {
+          dynamicLineHeight = '1.2';
+          if (style?.letterSpacing === undefined) dynamicLetterSpacing = '-0.5px';
+          autoScaleFactor = 0.92;
+        } else {
+          dynamicLineHeight = '1.35';
+        }
+      } else if (fieldKey === 'schoolName' || fieldKey === 'schoolHeader') {
+        if (textLen > 35) {
+          dynamicLineHeight = '1.2';
+          if (style?.letterSpacing === undefined) dynamicLetterSpacing = '-0.4px';
+          autoScaleFactor = 0.93;
+        } else {
+          dynamicLineHeight = '1.35';
+        }
+      } else {
+        if (textLen > 50) {
+          dynamicLineHeight = '1.35';
+          if (style?.letterSpacing === undefined) dynamicLetterSpacing = '-0.3px';
+        } else {
+          dynamicLineHeight = '1.5';
+        }
+      }
+    }
+
+    const finalPx = Math.round(computedPx * autoScaleFactor);
+
+    const fw = style?.fontWeight === 'light' ? 300
+      : style?.fontWeight === 'normal' ? 400
+      : style?.fontWeight === 'bold' ? 700
+      : style?.fontWeight === 'extrabold' ? 900
+      : undefined;
+
+    const fontFam = style?.fontFamily || (fieldKey === 'schoolName' ? data.elementStyles?.schoolHeader?.fontFamily : undefined) || data.fontFamily;
+
+    return {
+      color: style?.color || defaultColor,
+      fontSize: `${finalPx}px`,
+      fontFamily: fontFam ? `'${fontFam}', sans-serif, serif` : undefined,
+      textAlign: style?.align || undefined,
+      fontWeight: fw !== undefined ? fw : undefined,
+      marginTop: style?.marginTop !== undefined ? `${style.marginTop}px` : undefined,
+      marginBottom: style?.marginBottom !== undefined ? `${style.marginBottom}px` : undefined,
+      letterSpacing: dynamicLetterSpacing,
+      lineHeight: dynamicLineHeight,
+      wordBreak: 'break-word',
+      overflowWrap: 'break-word',
+    } as React.CSSProperties;
+  };
+
+  const handleFieldChange = (field: keyof CertificateData, val: any) => {
+    if (onUpdateData) {
+      onUpdateData({ [field]: val });
+    }
+  };
+
+  const updateStampField = (field: 'title' | 'subtext', val: string) => {
+    if (onUpdateData) {
+      onUpdateData({
+        stamp: {
+          ...data.stamp,
+          [field]: val
+        }
+      });
+    }
+  };
+
+  const updateSignatureField = (id: string, field: 'title' | 'name' | 'signatureText', val: string) => {
+    if (onUpdateData && data.signatures) {
+      const updated = data.signatures.map(s => s.id === id ? { ...s, [field]: val } : s);
+      onUpdateData({ signatures: updated });
+    }
+  };
+
+  // Render On-Element Directional Arrow Navigation Bar
+  const renderOnElementControls = () => {
+    if (!selectedKey || !isDragModeActive || isExporting) return null;
+
+    const isTopElement = selectedKey === 'schoolHeader' || selectedKey === 'logo';
+    const floatPositionClass = isTopElement
+      ? 'top-full mt-1 left-1/2 -translate-x-1/2'
+      : '-top-11 left-1/2 -translate-x-1/2';
+
+    return (
+      <div
+        className={`absolute ${floatPositionClass} flex items-center gap-1 bg-slate-900/95 text-white p-1 rounded-xl shadow-2xl border-2 border-amber-400 z-50 pointer-events-auto select-none dir-ltr`}
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        onTouchStart={(e) => e.stopPropagation()}
+      >
+        {/* UP */}
+        <button
+          type="button"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            startNudgeRepeat('up');
+          }}
+          onMouseUp={stopNudgeRepeat}
+          onMouseLeave={stopNudgeRepeat}
+          onTouchStart={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            startNudgeRepeat('up');
+          }}
+          onTouchEnd={stopNudgeRepeat}
+          onTouchCancel={stopNudgeRepeat}
+          onClick={(e) => e.stopPropagation()}
+          className="w-6 h-6 sm:w-7 sm:h-7 bg-amber-500 hover:bg-amber-400 active:scale-90 text-slate-950 rounded-lg flex items-center justify-center shadow transition cursor-pointer"
+          title="أعلى (اضغط للاستمرار)"
+        >
+          <ArrowUp className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+        </button>
+
+        {/* DOWN */}
+        <button
+          type="button"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            startNudgeRepeat('down');
+          }}
+          onMouseUp={stopNudgeRepeat}
+          onMouseLeave={stopNudgeRepeat}
+          onTouchStart={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            startNudgeRepeat('down');
+          }}
+          onTouchEnd={stopNudgeRepeat}
+          onTouchCancel={stopNudgeRepeat}
+          onClick={(e) => e.stopPropagation()}
+          className="w-6 h-6 sm:w-7 sm:h-7 bg-amber-500 hover:bg-amber-400 active:scale-90 text-slate-950 rounded-lg flex items-center justify-center shadow transition cursor-pointer"
+          title="أسفل (اضغط للاستمرار)"
+        >
+          <ArrowDown className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+        </button>
+
+        {/* LEFT */}
+        <button
+          type="button"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            startNudgeRepeat('left');
+          }}
+          onMouseUp={stopNudgeRepeat}
+          onMouseLeave={stopNudgeRepeat}
+          onTouchStart={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            startNudgeRepeat('left');
+          }}
+          onTouchEnd={stopNudgeRepeat}
+          onTouchCancel={stopNudgeRepeat}
+          onClick={(e) => e.stopPropagation()}
+          className="w-6 h-6 sm:w-7 sm:h-7 bg-amber-500 hover:bg-amber-400 active:scale-90 text-slate-950 rounded-lg flex items-center justify-center shadow transition cursor-pointer"
+          title="يسار (اضغط للاستمرار)"
+        >
+          <ArrowLeft className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+        </button>
+
+        {/* RIGHT */}
+        <button
+          type="button"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            startNudgeRepeat('right');
+          }}
+          onMouseUp={stopNudgeRepeat}
+          onMouseLeave={stopNudgeRepeat}
+          onTouchStart={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            startNudgeRepeat('right');
+          }}
+          onTouchEnd={stopNudgeRepeat}
+          onTouchCancel={stopNudgeRepeat}
+          onClick={(e) => e.stopPropagation()}
+          className="w-6 h-6 sm:w-7 sm:h-7 bg-amber-500 hover:bg-amber-400 active:scale-90 text-slate-950 rounded-lg flex items-center justify-center shadow transition cursor-pointer"
+          title="يمين (اضغط للاستمرار)"
+        >
+          <ArrowRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+        </button>
+
+        {/* Step Indicator / Toggle */}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setNudgeStep((prev) => (prev === 1 ? 2 : prev === 2 ? 5 : prev === 5 ? 10 : 1));
+          }}
+          className="px-1.5 h-6 sm:h-7 bg-slate-800 hover:bg-slate-700 text-amber-300 font-mono font-bold text-[10px] rounded-lg border border-slate-700 flex items-center justify-center transition cursor-pointer"
+          title="تغيير سرعة/خطوة الحركة بالبكسل"
+        >
+          {nudgeStep}px
+        </button>
+      </div>
+    );
+  };
+
+  // Draggable Wrapper Helper
+  const DraggableItem: React.FC<{
+    elementKey: string;
+    children: React.ReactNode;
+    className?: string;
+    style?: React.CSSProperties;
+  }> = ({ elementKey, children, className = '', style = {} }) => {
+    const itemRef = useRef<HTMLDivElement>(null);
+    let pos = data.positions?.[elementKey as keyof ElementPositions];
+    if (pos) {
+      if (elementKey === 'badge' || elementKey === 'stamp' || elementKey === 'qrCode') {
+        if (pos.y > 0) pos = { ...pos, y: 0 };
+      } else if (elementKey === 'signaturesBlock') {
+        const clampedY = Math.max(-15, Math.min(5, pos.y));
+        const clampedX = Math.max(-30, Math.min(30, pos.x));
+        if (clampedY !== pos.y || clampedX !== pos.x) {
+          pos = { x: clampedX, y: clampedY };
+        }
+      }
+    }
+    const isCustom = !!pos;
+    const isBeingDragged = draggingKey === elementKey;
+    const isSelected = selectedKey === elementKey && isDragModeActive;
+
+    const mergedStyle: React.CSSProperties = {
+      ...style,
+      ...(isCustom
+        ? {
+            transform: `translate(${pos.x}px, ${pos.y}px)`,
+            zIndex: isBeingDragged ? 45 : isSelected ? 40 : 30,
+          }
+        : {}),
+    };
+
+    return (
+      <div
+        ref={itemRef}
+        onClick={(e) => {
+          if (isDragModeActive) {
+            e.stopPropagation();
+            setSelectedKey(elementKey);
+          }
+        }}
+        onMouseDown={(e) => handleStartDrag(e, elementKey, itemRef.current)}
+        onTouchStart={(e) => handleStartDrag(e, elementKey, itemRef.current)}
+        className={`group/drag relative transition-all ${
+          isDragModeActive
+            ? 'cursor-grab active:cursor-grabbing hover:ring-2 hover:ring-amber-500/80 hover:ring-dashed rounded-xl p-1'
+            : ''
+        } ${isBeingDragged ? 'ring-2 ring-amber-500 ring-offset-2 scale-[1.01] shadow-xl z-50' : ''} ${
+          isSelected ? 'ring-2 ring-amber-500 ring-offset-1 bg-amber-500/5 rounded-xl z-40' : ''
+        } ${className}`}
+        style={mergedStyle}
+      >
+        {isDragModeActive && !isExporting && (
+          <span
+            className={`absolute -top-2.5 -right-2 p-1 rounded-full text-[9px] shadow-md z-30 transition cursor-pointer ${
+              isSelected
+                ? 'bg-amber-500 text-slate-950 ring-2 ring-amber-300 font-bold scale-110'
+                : 'bg-slate-800 text-white opacity-80 group-hover/drag:opacity-100'
+            }`}
+            title="انقر لتحديد هذا العنصر تحضيراً لتحريكه بالأسهم"
+          >
+            <Move className="w-3 h-3" />
+          </span>
+        )}
+
+        {/* Selected outline corner handles & Floating Arrow Controls */}
+        {isSelected && !isExporting && (
+          <>
+            <div className="absolute inset-0 border-2 border-amber-500 rounded-xl pointer-events-none z-20">
+              <span className="absolute -top-1.5 -left-1.5 w-3 h-3 bg-amber-500 rounded-full border-2 border-white" />
+              <span className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-amber-500 rounded-full border-2 border-white" />
+              <span className="absolute -bottom-1.5 -left-1.5 w-3 h-3 bg-amber-500 rounded-full border-2 border-white" />
+              <span className="absolute -bottom-1.5 -right-1.5 w-3 h-3 bg-amber-500 rounded-full border-2 border-white" />
+            </div>
+
+            {/* On-element Arrow Movement Controls */}
+            {renderOnElementControls()}
+          </>
+        )}
+
+        {children}
+      </div>
+    );
+  };
+
+  // Inline Editable Helper Component
+  const InlineEdit: React.FC<{
+    value: string;
+    onChange: (val: string) => void;
+    placeholder?: string;
+    className?: string;
+    style?: React.CSSProperties;
+    multiline?: boolean;
+    rows?: number;
+  }> = ({ value, onChange, placeholder, className = '', style = {}, multiline = false, rows = 2 }) => {
+    // Helper to strip classes that cause text clipping or truncation
+    const sanitizeCls = (cls: string) => {
+      return cls
+        .replace(/\btruncate\b/g, '')
+        .replace(/\boverflow-hidden\b/g, '')
+        .replace(/\btext-ellipsis\b/g, '')
+        .replace(/\bmax-w-[^\s]+\b/g, '')
+        .trim();
+    };
+
+    const styleTextAlign = (style as Record<string, unknown>)?.textAlign as string | undefined;
+
+    if (isExporting || !onUpdateData) {
+      const cleanClassName = sanitizeCls(className);
+      const customLineHeight = (style as Record<string, unknown>)?.lineHeight as string | undefined;
+      const customLetterSpacing = (style as Record<string, unknown>)?.letterSpacing as string | undefined;
+      const isRightAligned = cleanClassName.includes('text-right') || styleTextAlign === 'right';
+      const isLeftAligned = cleanClassName.includes('text-left') || styleTextAlign === 'left';
+      const alignClasses = isRightAligned
+        ? 'text-right items-end justify-center'
+        : isLeftAligned
+        ? 'text-left items-start justify-center'
+        : 'text-center items-center justify-center';
+
+      return (
+        <span
+          className={`inline-flex flex-col whitespace-pre-wrap break-words max-w-full ${alignClasses} ${cleanClassName}`}
+          style={{
+            ...style,
+            lineHeight: customLineHeight || '1.5',
+            letterSpacing: customLetterSpacing || 'normal',
+            overflow: 'visible',
+            textOverflow: 'clip',
+            wordBreak: 'break-word',
+            overflowWrap: 'break-word',
+            alignSelf: isRightAligned ? 'flex-end' : isLeftAligned ? 'flex-start' : 'center',
+          }}
+        >
+          {value || placeholder}
+        </span>
+      );
+    }
+
+    if (multiline) {
+      const lineCount = (value || placeholder || '').split('\n').length;
+      const estimatedByLength = Math.ceil(((value || placeholder || '').length) / 72);
+      const computedRows = Math.max(lineCount, estimatedByLength, 1);
+      const customLineHeight = (style as Record<string, unknown>)?.lineHeight as string | undefined;
+      const customLetterSpacing = (style as Record<string, unknown>)?.letterSpacing as string | undefined;
+      const isRightAligned = className.includes('text-right') || styleTextAlign === 'right';
+      const isLeftAligned = className.includes('text-left') || styleTextAlign === 'left';
+      const alignClass = isRightAligned ? 'text-right' : isLeftAligned ? 'text-left' : 'text-center';
+      const itemsClass = isRightAligned ? 'items-end' : isLeftAligned ? 'items-start' : 'items-center';
+
+      return (
+        <div className={`relative group/inline w-full flex flex-col justify-center ${itemsClass}`}>
+          <textarea
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder={placeholder}
+            rows={computedRows}
+            className={`${sanitizeCls(className)} bg-transparent border-0 p-0 m-0 hover:border-amber-400/80 focus:border-amber-500 focus:bg-white/95 focus:ring-2 focus:ring-amber-400/50 rounded-lg transition-all outline-none resize-none ${alignClass} w-full`}
+            style={{
+              ...style,
+              lineHeight: customLineHeight || '1.6',
+              letterSpacing: customLetterSpacing || 'normal',
+              overflow: 'visible',
+            }}
+            dir="auto"
+          />
+          <span className="opacity-0 group-hover/inline:opacity-100 transition-opacity absolute -top-3 left-1/2 -translate-x-1/2 bg-amber-700 text-white text-[10px] px-1.5 py-0.5 rounded shadow pointer-events-none z-30 font-sans font-bold flex items-center gap-1 whitespace-nowrap">
+            <Edit3 className="w-2.5 h-2.5" /> تحرير
+          </span>
+        </div>
+      );
+    }
+
+    const customLineHeight = (style as Record<string, unknown>)?.lineHeight as string | undefined;
+    const customLetterSpacing = (style as Record<string, unknown>)?.letterSpacing as string | undefined;
+    const isRightAligned = className.includes('text-right') || styleTextAlign === 'right';
+    const isLeftAligned = className.includes('text-left') || styleTextAlign === 'left';
+    const alignClass = isRightAligned ? 'text-right' : isLeftAligned ? 'text-left' : 'text-center';
+    const itemsClass = isRightAligned ? 'items-end' : isLeftAligned ? 'items-start' : 'items-center';
+
+    return (
+      <div className={`relative group/inline w-full flex flex-col justify-center ${itemsClass}`}>
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          className={`${sanitizeCls(className)} bg-transparent border-0 p-0 m-0 hover:border-amber-400/80 focus:border-amber-500 focus:bg-white/95 focus:ring-2 focus:ring-amber-400/50 rounded-lg transition-all outline-none ${alignClass} w-full min-w-0`}
+          style={{
+            ...style,
+            lineHeight: customLineHeight || 'inherit',
+            letterSpacing: customLetterSpacing || 'normal',
+            overflow: 'visible',
+          }}
+          dir="auto"
+        />
+        <span className="opacity-0 group-hover/inline:opacity-100 transition-opacity absolute -top-3 left-1/2 -translate-x-1/2 bg-amber-700 text-white text-[10px] px-1.5 py-0.5 rounded shadow pointer-events-none z-30 font-sans font-bold flex items-center gap-1 whitespace-nowrap">
+          <Edit3 className="w-2.5 h-2.5" /> تحرير
+        </span>
+      </div>
+    );
+  };
+
+  // Frame Border Styles with independent color, thickness, and style controls
+  const renderFrameBorders = () => {
+    const frameColor = data.borderColor || data.primaryColor || '#d97706';
+    const frameSecColor = data.borderSecondaryColor || data.secondaryColor || '#f59e0b';
+    const bwScale = data.borderWidth !== undefined ? data.borderWidth : 2; // 1 to 10 scale
+    const baseInset = data.borderPadding !== undefined ? data.borderPadding : 12; // in px
+    const wPx = Math.max(1, Math.round(bwScale * 1.5)); // px width
+    const wPxThick = Math.max(2, Math.round(bwScale * 3)); // thick px width
+
+    if (data.customFrameUrl) {
+      return (
+        <div
+          className="absolute pointer-events-none z-10 transition-all duration-300"
+          style={{
+            top: `${baseInset}px`,
+            bottom: `${baseInset}px`,
+            left: `${baseInset}px`,
+            right: `${baseInset}px`,
+          }}
+        >
+          <img
+            src={data.customFrameUrl}
+            alt="Custom Certificate Frame"
+            className="w-full h-full object-fill pointer-events-none"
+            style={{
+              opacity: data.customFrameOpacity ?? 1,
+            }}
+          />
+        </div>
+      );
+    }
+
+    switch (data.frameStyle) {
+      case 'double-gold':
+        return (
+          <>
+            <div
+              className="absolute pointer-events-none rounded-lg shadow-xs"
+              style={{
+                top: `${baseInset}px`,
+                bottom: `${baseInset}px`,
+                left: `${baseInset}px`,
+                right: `${baseInset}px`,
+                borderStyle: 'solid',
+                borderWidth: `${wPxThick}px`,
+                borderColor: frameColor,
+              }}
+            />
+            <div
+              className="absolute pointer-events-none rounded-sm"
+              style={{
+                top: `${baseInset + 8}px`,
+                bottom: `${baseInset + 8}px`,
+                left: `${baseInset + 8}px`,
+                right: `${baseInset + 8}px`,
+                borderStyle: 'solid',
+                borderWidth: `${Math.max(1, wPx - 1)}px`,
+                borderColor: frameSecColor,
+              }}
+            />
+            <div
+              className="absolute w-12 h-12 rounded-tl-md pointer-events-none"
+              style={{
+                top: `${baseInset + 4}px`,
+                left: `${baseInset + 4}px`,
+                borderTop: `${wPxThick + 1}px solid ${frameColor}`,
+                borderLeft: `${wPxThick + 1}px solid ${frameColor}`,
+              }}
+            />
+            <div
+              className="absolute w-12 h-12 rounded-tr-md pointer-events-none"
+              style={{
+                top: `${baseInset + 4}px`,
+                right: `${baseInset + 4}px`,
+                borderTop: `${wPxThick + 1}px solid ${frameColor}`,
+                borderRight: `${wPxThick + 1}px solid ${frameColor}`,
+              }}
+            />
+            <div
+              className="absolute w-12 h-12 rounded-bl-md pointer-events-none"
+              style={{
+                bottom: `${baseInset + 4}px`,
+                left: `${baseInset + 4}px`,
+                borderBottom: `${wPxThick + 1}px solid ${frameColor}`,
+                borderLeft: `${wPxThick + 1}px solid ${frameColor}`,
+              }}
+            />
+            <div
+              className="absolute w-12 h-12 rounded-br-md pointer-events-none"
+              style={{
+                bottom: `${baseInset + 4}px`,
+                right: `${baseInset + 4}px`,
+                borderBottom: `${wPxThick + 1}px solid ${frameColor}`,
+                borderRight: `${wPxThick + 1}px solid ${frameColor}`,
+              }}
+            />
+          </>
+        );
+
+      case 'guilloche-royal':
+        return (
+          <>
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                top: `${baseInset}px`,
+                bottom: `${baseInset}px`,
+                left: `${baseInset}px`,
+                right: `${baseInset}px`,
+                border: `${wPxThick}px double ${frameColor}`,
+              }}
+            />
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                top: `${baseInset + 10}px`,
+                bottom: `${baseInset + 10}px`,
+                left: `${baseInset + 10}px`,
+                right: `${baseInset + 10}px`,
+                border: `${wPx}px dashed ${frameSecColor}`,
+              }}
+            />
+            {[
+              { pos: 'top-2 left-2', rot: '0deg' },
+              { pos: 'top-2 right-2', rot: '90deg' },
+              { pos: 'bottom-2 left-2', rot: '270deg' },
+              { pos: 'bottom-2 right-2', rot: '180deg' },
+            ].map((c, i) => (
+              <div key={i} className={`absolute ${c.pos} w-14 h-14 pointer-events-none`} style={{ transform: `rotate(${c.rot})` }}>
+                <svg viewBox="0 0 100 100" className="w-full h-full">
+                  <circle cx="50" cy="50" r="42" fill="none" stroke={frameColor} strokeWidth={bwScale} strokeDasharray="3 3" />
+                  <circle cx="50" cy="50" r="32" fill="none" stroke={frameSecColor} strokeWidth={bwScale} />
+                  <path d="M50 10 C30 50 70 50 50 90 M10 50 C50 30 50 70 90 50" fill="none" stroke={frameColor} strokeWidth={bwScale} />
+                  <polygon points="50,20 60,40 80,50 60,60 50,80 40,60 20,50 40,40" fill={frameSecColor} opacity="0.8" />
+                </svg>
+              </div>
+            ))}
+          </>
+        );
+
+      case 'golden-vines':
+        return (
+          <>
+            <div
+              className="absolute pointer-events-none rounded-2xl"
+              style={{
+                top: `${baseInset}px`,
+                bottom: `${baseInset}px`,
+                left: `${baseInset}px`,
+                right: `${baseInset}px`,
+                border: `${wPxThick}px solid ${frameColor}`,
+              }}
+            />
+            <div
+              className="absolute pointer-events-none rounded-xl"
+              style={{
+                top: `${baseInset + 6}px`,
+                bottom: `${baseInset + 6}px`,
+                left: `${baseInset + 6}px`,
+                right: `${baseInset + 6}px`,
+                border: `${wPx}px dotted ${frameSecColor}`,
+              }}
+            />
+            {[
+              'top-1 left-1 scale-100',
+              'top-1 right-1 -scale-x-100',
+              'bottom-1 left-1 -scale-y-100',
+              'bottom-1 right-1 -scale-x-100 -scale-y-100',
+            ].map((cls, i) => (
+              <div key={i} className={`absolute ${cls} w-16 h-16 pointer-events-none`}>
+                <svg viewBox="0 0 100 100" fill="none" stroke={frameColor} strokeWidth={Math.max(2, bwScale)}>
+                  <path d="M10 90 C 20 50, 50 20, 90 10" />
+                  <path d="M30 65 C 20 60, 15 45, 25 45 C 35 45, 35 60, 30 65" fill={frameSecColor} />
+                  <path d="M55 40 C 45 35, 40 20, 50 20 C 60 20, 60 35, 55 40" fill={frameSecColor} />
+                  <path d="M75 25 C 65 20, 60 5, 70 5 C 80 5, 80 20, 75 25" fill={frameSecColor} />
+                  <circle cx="20" cy="80" r="4" fill={frameColor} />
+                </svg>
+              </div>
+            ))}
+          </>
+        );
+
+      case 'andalusian-star':
+        return (
+          <>
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                top: `${baseInset}px`,
+                bottom: `${baseInset}px`,
+                left: `${baseInset}px`,
+                right: `${baseInset}px`,
+                border: `${wPxThick}px solid ${frameColor}`,
+              }}
+            />
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                top: `${baseInset + 10}px`,
+                bottom: `${baseInset + 10}px`,
+                left: `${baseInset + 10}px`,
+                right: `${baseInset + 10}px`,
+                border: `${wPx}px solid ${frameSecColor}`,
+              }}
+            />
+            {[
+              'top-2 left-2',
+              'top-2 right-2',
+              'bottom-2 left-2',
+              'bottom-2 right-2',
+            ].map((pos, i) => (
+              <div key={i} className={`absolute ${pos} w-12 h-12 pointer-events-none flex items-center justify-center`}>
+                <div
+                  className="w-10 h-10 transform rotate-45 flex items-center justify-center border shadow-xs"
+                  style={{ backgroundColor: frameColor, borderColor: frameSecColor, borderWidth: `${wPx}px` }}
+                >
+                  <div
+                    className="w-7 h-7 transform rotate-45 flex items-center justify-center"
+                    style={{ backgroundColor: frameSecColor }}
+                  >
+                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: frameColor }} />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </>
+        );
+
+      case 'floral-corners':
+        return (
+          <>
+            <div
+              className="absolute pointer-events-none rounded-lg"
+              style={{
+                top: `${baseInset}px`,
+                bottom: `${baseInset}px`,
+                left: `${baseInset}px`,
+                right: `${baseInset}px`,
+                border: `${wPxThick}px solid ${frameColor}`,
+              }}
+            />
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                top: `${baseInset + 8}px`,
+                bottom: `${baseInset + 8}px`,
+                left: `${baseInset + 8}px`,
+                right: `${baseInset + 8}px`,
+                border: `${wPx}px dashed ${frameSecColor}`,
+              }}
+            />
+            {[
+              'top-1 left-1',
+              'top-1 right-1 -scale-x-100',
+              'bottom-1 left-1 -scale-y-100',
+              'bottom-1 right-1 -scale-x-100 -scale-y-100',
+            ].map((cls, i) => (
+              <div key={i} className={`absolute ${cls} w-16 h-16 pointer-events-none`}>
+                <svg viewBox="0 0 100 100" fill="currentColor" style={{ color: frameColor }}>
+                  <path d="M10 10 H80 V20 H20 V80 H10 Z" />
+                  <circle cx="35" cy="35" r="8" fill={frameSecColor} />
+                  <path d="M35 15 C45 15, 50 25, 35 35 C20 25, 25 15, 35 15 Z" fill={frameColor} />
+                  <path d="M15 35 C15 45, 25 50, 35 35 C25 20, 15 25, 15 35 Z" fill={frameColor} />
+                </svg>
+              </div>
+            ))}
+          </>
+        );
+
+      case 'greek-key-meander':
+        return (
+          <>
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                top: `${baseInset}px`,
+                bottom: `${baseInset}px`,
+                left: `${baseInset}px`,
+                right: `${baseInset}px`,
+                border: `${wPxThick + 2}px solid ${frameColor}`,
+              }}
+            />
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                top: `${baseInset + 8}px`,
+                bottom: `${baseInset + 8}px`,
+                left: `${baseInset + 8}px`,
+                right: `${baseInset + 8}px`,
+                border: `${wPx}px solid ${frameSecColor}`,
+              }}
+            />
+            {[
+              'top-2 left-2',
+              'top-2 right-2',
+              'bottom-2 left-2',
+              'bottom-2 right-2',
+            ].map((pos, i) => (
+              <div key={i} className={`absolute ${pos} w-10 h-10 pointer-events-none`}>
+                <svg viewBox="0 0 50 50" fill="none" stroke={frameColor} strokeWidth={Math.max(2, bwScale)}>
+                  <path d="M5 5 H45 V45 H5 Z M12 12 H38 V38 H12 Z M18 18 H32 V32 H18 Z" fill={frameSecColor} opacity="0.3" />
+                </svg>
+              </div>
+            ))}
+          </>
+        );
+
+      case 'moroccan-mosaic':
+        return (
+          <>
+            <div
+              className="absolute pointer-events-none rounded-xl"
+              style={{
+                top: `${baseInset}px`,
+                bottom: `${baseInset}px`,
+                left: `${baseInset}px`,
+                right: `${baseInset}px`,
+                border: `${wPxThick + 3}px solid ${frameColor}`,
+              }}
+            />
+            <div
+              className="absolute pointer-events-none rounded-lg"
+              style={{
+                top: `${baseInset + 8}px`,
+                bottom: `${baseInset + 8}px`,
+                left: `${baseInset + 8}px`,
+                right: `${baseInset + 8}px`,
+                border: `${wPx}px dotted ${frameSecColor}`,
+              }}
+            />
+            {[
+              'top-2 left-2',
+              'top-2 right-2',
+              'bottom-2 left-2',
+              'bottom-2 right-2',
+            ].map((pos, i) => (
+              <div key={i} className={`absolute ${pos} w-10 h-10 pointer-events-none flex items-center justify-center`}>
+                <div className="w-8 h-8 rounded-md transform rotate-45 flex items-center justify-center shadow-xs" style={{ backgroundColor: frameSecColor }}>
+                  <div className="w-4 h-4 rounded-xs" style={{ backgroundColor: frameColor }} />
+                </div>
+              </div>
+            ))}
+          </>
+        );
+
+      case 'victorian-crest':
+        return (
+          <>
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                top: `${baseInset}px`,
+                bottom: `${baseInset}px`,
+                left: `${baseInset}px`,
+                right: `${baseInset}px`,
+                border: `${wPxThick}px double ${frameColor}`,
+              }}
+            />
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                top: `${baseInset + 12}px`,
+                bottom: `${baseInset + 12}px`,
+                left: `${baseInset + 12}px`,
+                right: `${baseInset + 12}px`,
+                border: `${wPx}px solid ${frameSecColor}`,
+              }}
+            />
+            <div className="absolute top-0 right-1/2 translate-x-1/2 pointer-events-none flex flex-col items-center">
+              <svg width="120" height="24" viewBox="0 0 120 24" fill={frameColor}>
+                <path d="M0 0 C 40 24, 80 24, 120 0 L 100 24 L 20 24 Z" />
+                <circle cx="60" cy="10" r="4" fill={frameSecColor} />
+              </svg>
+            </div>
+            {[
+              'top-2 left-2',
+              'top-2 right-2 -scale-x-100',
+              'bottom-2 left-2 -scale-y-100',
+              'bottom-2 right-2 -scale-x-100 -scale-y-100',
+            ].map((cls, i) => (
+              <div key={i} className={`absolute ${cls} w-12 h-12 pointer-events-none`}>
+                <svg viewBox="0 0 100 100" fill={frameColor}>
+                  <path d="M10 10 H90 V25 C 50 25, 25 50, 25 90 H10 Z" />
+                  <circle cx="45" cy="45" r="7" fill={frameSecColor} />
+                </svg>
+              </div>
+            ))}
+          </>
+        );
+
+      case 'double-dotted-luxury':
+        return (
+          <>
+            <div
+              className="absolute pointer-events-none rounded-2xl"
+              style={{
+                top: `${baseInset}px`,
+                bottom: `${baseInset}px`,
+                left: `${baseInset}px`,
+                right: `${baseInset}px`,
+                border: `${wPxThick}px solid ${frameColor}`,
+              }}
+            />
+            <div
+              className="absolute pointer-events-none rounded-xl"
+              style={{
+                top: `${baseInset + 6}px`,
+                bottom: `${baseInset + 6}px`,
+                left: `${baseInset + 6}px`,
+                right: `${baseInset + 6}px`,
+                border: `${wPxThick + 1}px dotted ${frameSecColor}`,
+              }}
+            />
+            <div
+              className="absolute pointer-events-none rounded-lg"
+              style={{
+                top: `${baseInset + 14}px`,
+                bottom: `${baseInset + 14}px`,
+                left: `${baseInset + 14}px`,
+                right: `${baseInset + 14}px`,
+                border: `${wPx}px dashed ${frameColor}`,
+              }}
+            />
+          </>
+        );
+
+      case 'emerald-border':
+        return (
+          <>
+            <div
+              className="absolute pointer-events-none rounded-xl"
+              style={{
+                top: `${baseInset}px`,
+                bottom: `${baseInset}px`,
+                left: `${baseInset}px`,
+                right: `${baseInset}px`,
+                borderStyle: 'solid',
+                borderWidth: `${wPxThick}px`,
+                borderColor: frameColor,
+              }}
+            />
+            <div
+              className="absolute pointer-events-none rounded-lg"
+              style={{
+                top: `${baseInset + 8}px`,
+                bottom: `${baseInset + 8}px`,
+                left: `${baseInset + 8}px`,
+                right: `${baseInset + 8}px`,
+                borderStyle: 'dashed',
+                borderWidth: `${wPx}px`,
+                borderColor: frameSecColor,
+              }}
+            />
+            {[
+              'top-4 left-4',
+              'top-4 right-4',
+              'bottom-4 left-4',
+              'bottom-4 right-4',
+            ].map((pos, i) => (
+              <div
+                key={i}
+                className={`absolute ${pos} w-7 h-7 transform rotate-45 opacity-90 pointer-events-none`}
+                style={{ backgroundColor: frameColor }}
+              />
+            ))}
+          </>
+        );
+
+      case 'royal-ribbon':
+        return (
+          <>
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                top: `${baseInset}px`,
+                bottom: `${baseInset}px`,
+                left: `${baseInset}px`,
+                right: `${baseInset}px`,
+                borderStyle: 'solid',
+                borderWidth: `${wPxThick + 4}px`,
+                borderColor: frameColor,
+              }}
+            />
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                top: `${baseInset + 12}px`,
+                bottom: `${baseInset + 12}px`,
+                left: `${baseInset + 12}px`,
+                right: `${baseInset + 12}px`,
+                borderStyle: 'solid',
+                borderWidth: `${wPx}px`,
+                borderColor: frameSecColor,
+              }}
+            />
+            <div
+              className="absolute top-0 right-1/2 translate-x-1/2 text-xs px-6 py-1 font-bold rounded-b-md shadow-md pointer-events-none z-10"
+              style={{ backgroundColor: frameColor, color: frameSecColor }}
+            >
+              شهادة شرف رسمية
+            </div>
+          </>
+        );
+
+      case 'classic-ornate':
+        return (
+          <>
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                top: `${baseInset}px`,
+                bottom: `${baseInset}px`,
+                left: `${baseInset}px`,
+                right: `${baseInset}px`,
+                border: `${wPx}px solid ${frameColor}`,
+              }}
+            />
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                top: `${baseInset + 6}px`,
+                bottom: `${baseInset + 6}px`,
+                left: `${baseInset + 6}px`,
+                right: `${baseInset + 6}px`,
+                border: `${wPxThick}px solid ${frameSecColor}`,
+              }}
+            />
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                top: `${baseInset + 14}px`,
+                bottom: `${baseInset + 14}px`,
+                left: `${baseInset + 14}px`,
+                right: `${baseInset + 14}px`,
+                border: `${wPx}px solid ${frameColor}`,
+              }}
+            />
+          </>
+        );
+
+      case 'modern-geometric':
+        return (
+          <>
+            <div
+              className="absolute top-0 left-0 w-32 h-32 rounded-br-full pointer-events-none opacity-20"
+              style={{ backgroundColor: frameColor }}
+            />
+            <div
+              className="absolute bottom-0 right-0 w-32 h-32 rounded-tl-full pointer-events-none opacity-20"
+              style={{ backgroundColor: frameSecColor }}
+            />
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                top: `${baseInset}px`,
+                bottom: `${baseInset}px`,
+                left: `${baseInset}px`,
+                right: `${baseInset}px`,
+                border: `${wPxThick}px solid ${frameColor}`,
+              }}
+            />
+          </>
+        );
+
+      case 'playful-dots':
+        return (
+          <>
+            <div
+              className="absolute pointer-events-none rounded-2xl"
+              style={{
+                top: `${baseInset}px`,
+                bottom: `${baseInset}px`,
+                left: `${baseInset}px`,
+                right: `${baseInset}px`,
+                border: `${wPxThick}px dashed ${frameColor}`,
+              }}
+            />
+            {[
+              'top-2 left-2',
+              'top-2 right-2',
+              'bottom-2 left-2',
+              'bottom-2 right-2',
+            ].map((pos, i) => (
+              <div
+                key={i}
+                className={`absolute ${pos} w-6 h-6 rounded-full pointer-events-none`}
+                style={{ backgroundColor: frameSecColor }}
+              />
+            ))}
+          </>
+        );
+
+      case 'islamic-arch':
+        return (
+          <>
+            <div
+              className="absolute pointer-events-none rounded-lg"
+              style={{
+                top: `${baseInset}px`,
+                bottom: `${baseInset}px`,
+                left: `${baseInset}px`,
+                right: `${baseInset}px`,
+                border: `${wPxThick}px solid ${frameColor}`,
+              }}
+            />
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                top: `${baseInset + 8}px`,
+                bottom: `${baseInset + 8}px`,
+                left: `${baseInset + 8}px`,
+                right: `${baseInset + 8}px`,
+                border: `${wPx}px solid ${frameSecColor}`,
+              }}
+            />
+          </>
+        );
+
+      case 'baroque-gold':
+        return (
+          <>
+            <div
+              className="absolute pointer-events-none rounded-lg shadow-md"
+              style={{
+                top: `${baseInset}px`,
+                bottom: `${baseInset}px`,
+                left: `${baseInset}px`,
+                right: `${baseInset}px`,
+                border: `${wPxThick + 2}px solid ${frameColor}`,
+              }}
+            />
+            <div
+              className="absolute pointer-events-none rounded-sm"
+              style={{
+                top: `${baseInset + 8}px`,
+                bottom: `${baseInset + 8}px`,
+                left: `${baseInset + 8}px`,
+                right: `${baseInset + 8}px`,
+                border: `${wPx}px solid ${frameSecColor}`,
+              }}
+            />
+            {[
+              'top-1 left-1',
+              'top-1 right-1 scale-x-[-1]',
+              'bottom-1 left-1 scale-y-[-1]',
+              'bottom-1 right-1 scale-x-[-1] scale-y-[-1]',
+            ].map((cls, i) => (
+              <div key={i} className={`absolute ${cls} w-11 h-11 pointer-events-none`} style={{ color: frameColor }}>
+                <svg viewBox="0 0 100 100" fill="currentColor">
+                  <path d="M10,10 L90,10 L90,20 L20,20 L20,90 L10,90 Z M30,30 L70,30 L30,70 Z M40,10 C20,10 10,20 10,40 C10,25 25,10 40,10 Z" opacity="0.95"/>
+                  <circle cx="25" cy="25" r="5" fill={frameSecColor}/>
+                </svg>
+              </div>
+            ))}
+          </>
+        );
+
+      case 'vintage-certificate':
+        return (
+          <>
+            <div
+              className="absolute pointer-events-none rounded-sm"
+              style={{
+                top: `${baseInset}px`,
+                bottom: `${baseInset}px`,
+                left: `${baseInset}px`,
+                right: `${baseInset}px`,
+                border: `${wPxThick}px solid ${frameColor}`,
+              }}
+            />
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                top: `${baseInset + 8}px`,
+                bottom: `${baseInset + 8}px`,
+                left: `${baseInset + 8}px`,
+                right: `${baseInset + 8}px`,
+                border: `${wPx}px dashed ${frameSecColor}`,
+              }}
+            />
+            {[
+              'top-3 left-3',
+              'top-3 right-3',
+              'bottom-3 left-3',
+              'bottom-3 right-3',
+            ].map((pos, i) => (
+              <div key={i} className={`absolute ${pos} w-8 h-8 pointer-events-none flex items-center justify-center border`} style={{ borderColor: frameColor }}>
+                <span className="w-2 h-2 transform rotate-45" style={{ backgroundColor: frameSecColor }} />
+              </div>
+            ))}
+          </>
+        );
+
+      case 'oriental-islamic':
+        return (
+          <>
+            <div
+              className="absolute pointer-events-none rounded-lg"
+              style={{
+                top: `${baseInset}px`,
+                bottom: `${baseInset}px`,
+                left: `${baseInset}px`,
+                right: `${baseInset}px`,
+                border: `${wPxThick}px solid ${frameColor}`,
+              }}
+            />
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                top: `${baseInset + 8}px`,
+                bottom: `${baseInset + 8}px`,
+                left: `${baseInset + 8}px`,
+                right: `${baseInset + 8}px`,
+                border: `${wPx}px solid ${frameSecColor}`,
+              }}
+            />
+            {['top-2 left-2', 'top-2 right-2', 'bottom-2 left-2', 'bottom-2 right-2'].map((pos, i) => (
+              <div key={i} className={`absolute ${pos} w-8 h-8 pointer-events-none flex items-center justify-center`}>
+                <div className="w-6 h-6 border transform rotate-45 flex items-center justify-center" style={{ backgroundColor: frameColor, borderColor: frameSecColor }}>
+                  <div className="w-3 h-3 transform rotate-45" style={{ backgroundColor: frameSecColor }} />
+                </div>
+              </div>
+            ))}
+          </>
+        );
+
+      case 'luxurious-gradient-border':
+        return (
+          <>
+            <div
+              className="absolute pointer-events-none rounded-2xl shadow-lg"
+              style={{
+                top: `${baseInset}px`,
+                bottom: `${baseInset}px`,
+                left: `${baseInset}px`,
+                right: `${baseInset}px`,
+                border: `${wPxThick + 4}px solid ${frameColor}`,
+              }}
+            />
+            <div
+              className="absolute pointer-events-none rounded-xl"
+              style={{
+                top: `${baseInset + 10}px`,
+                bottom: `${baseInset + 10}px`,
+                left: `${baseInset + 10}px`,
+                right: `${baseInset + 10}px`,
+                border: `${wPx}px solid ${frameSecColor}`,
+              }}
+            />
+            {['top-2 left-2', 'top-2 right-2', 'bottom-2 left-2', 'bottom-2 right-2'].map((pos, i) => (
+              <div key={i} className={`absolute ${pos} w-9 h-9 border rounded-full flex items-center justify-center shadow-xs pointer-events-none`} style={{ borderColor: frameColor, backgroundColor: '#fff' }}>
+                <span className="w-4 h-4 rounded-full" style={{ backgroundColor: frameSecColor }} />
+              </div>
+            ))}
+          </>
+        );
+
+      case 'wavy-artistic':
+        return (
+          <>
+            <div
+              className="absolute pointer-events-none rounded-3xl"
+              style={{
+                top: `${baseInset}px`,
+                bottom: `${baseInset}px`,
+                left: `${baseInset}px`,
+                right: `${baseInset}px`,
+                border: `${wPxThick}px solid ${frameColor}`,
+              }}
+            />
+            <div
+              className="absolute pointer-events-none rounded-2xl"
+              style={{
+                top: `${baseInset + 10}px`,
+                bottom: `${baseInset + 10}px`,
+                left: `${baseInset + 10}px`,
+                right: `${baseInset + 10}px`,
+                border: `${wPx}px dashed ${frameSecColor}`,
+              }}
+            />
+            {['top-2 left-2', 'top-2 right-2', 'bottom-2 left-2', 'bottom-2 right-2'].map((pos, i) => (
+              <div key={i} className={`absolute ${pos} w-7 h-7 rounded-full opacity-80 pointer-events-none`} style={{ backgroundColor: frameColor }} />
+            ))}
+          </>
+        );
+
+      case 'geometric-cyber':
+        return (
+          <>
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                top: `${baseInset}px`,
+                bottom: `${baseInset}px`,
+                left: `${baseInset}px`,
+                right: `${baseInset}px`,
+                border: `${wPxThick}px solid ${frameColor}`,
+                boxShadow: `0 0 12px ${frameColor}40`,
+              }}
+            />
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                top: `${baseInset + 8}px`,
+                bottom: `${baseInset + 8}px`,
+                left: `${baseInset + 8}px`,
+                right: `${baseInset + 8}px`,
+                border: `${wPx}px solid ${frameSecColor}`,
+              }}
+            />
+            <div className="absolute top-0 left-0 w-8 h-8 pointer-events-none" style={{ borderTop: `4px solid ${frameColor}`, borderLeft: `4px solid ${frameColor}` }} />
+            <div className="absolute top-0 right-0 w-8 h-8 pointer-events-none" style={{ borderTop: `4px solid ${frameColor}`, borderRight: `4px solid ${frameColor}` }} />
+            <div className="absolute bottom-0 left-0 w-8 h-8 pointer-events-none" style={{ borderBottom: `4px solid ${frameColor}`, borderLeft: `4px solid ${frameColor}` }} />
+            <div className="absolute bottom-0 right-0 w-8 h-8 pointer-events-none" style={{ borderBottom: `4px solid ${frameColor}`, borderRight: `4px solid ${frameColor}` }} />
+          </>
+        );
+
+      default:
+        return (
+          <div
+            className="absolute pointer-events-none rounded-lg"
+            style={{
+              top: `${baseInset}px`,
+              bottom: `${baseInset}px`,
+              left: `${baseInset}px`,
+              right: `${baseInset}px`,
+              border: `${wPx}px solid ${frameColor}`,
+            }}
+          />
+        );
+    }
+  };
+
+  const getAspectDimensions = () => {
+    switch (data.aspectRatio) {
+      case 'A4-portrait':
+        return {
+          baseWidth: 794,
+          baseHeight: 1123,
+          widthClass: 'w-[794px] h-[1123px]',
+          label: 'ورقة A4 عمودية (210 × 297 مم)'
+        };
+      case 'square':
+        return {
+          baseWidth: 800,
+          baseHeight: 800,
+          widthClass: 'w-[800px] h-[800px]',
+          label: 'مربع قياسي (1 : 1)'
+        };
+      case 'A4-landscape':
+      default:
+        return {
+          baseWidth: 1050,
+          baseHeight: 742,
+          widthClass: 'w-[1050px] h-[742px]',
+          label: 'ورقة A4 أفقية (297 × 210 مم)'
+        };
+    }
+  };
+
+  const aspectInfo = getAspectDimensions();
+
+  let scale = 1.0;
+  if (!isExporting) {
+    if (zoomMode === '150') {
+      scale = 1.50;
+    } else if (zoomMode === '125') {
+      scale = 1.25;
+    } else if (zoomMode === '100') {
+      scale = 1.0;
+    } else if (zoomMode === '75') {
+      scale = 0.75;
+    } else if (zoomMode === '50') {
+      scale = 0.50;
+    } else {
+      if (containerWidth > 0) {
+        const availableWidth = Math.max(280, containerWidth - 32);
+        scale = Math.min(1.0, availableWidth / aspectInfo.baseWidth);
+      }
+    }
+  }
+
+  const scaledWidth = isExporting ? aspectInfo.baseWidth : Math.round(aspectInfo.baseWidth * scale);
+  const scaledHeight = isExporting ? aspectInfo.baseHeight : Math.round(aspectInfo.baseHeight * scale);
+
+  return (
+    <div ref={containerRef} className="w-full flex flex-col items-center justify-center py-2 select-none">
+      
+      {/* Top Banner indicating Layout, Undo/Redo, Drag Controls & Zoom Mode */}
+      {!isExporting && (
+        <div className="w-full mb-3 px-3.5 py-2 bg-slate-900/95 text-amber-300 text-xs font-bold rounded-2xl shadow-md border border-amber-500/30 flex flex-wrap items-center justify-between gap-2 no-print">
+          
+          <div className="flex items-center gap-2">
+            <FileText className="w-4 h-4 text-amber-400 shrink-0" />
+            <span className="truncate">{aspectInfo.label}</span>
+          </div>
+
+          {/* Undo / Redo Controls */}
+          {(onUndo || onRedo) && (
+            <div className="flex items-center gap-1 bg-slate-800/90 px-2 py-1 rounded-xl border border-slate-700/60">
+              <button
+                onClick={onUndo}
+                disabled={!canUndo}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1 ${
+                  canUndo
+                    ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-xs cursor-pointer'
+                    : 'bg-slate-800 text-slate-500 cursor-not-allowed opacity-50'
+                }`}
+                title="تراجع عن الخطوة السابقة (Ctrl+Z)"
+              >
+                <Undo2 className="w-3.5 h-3.5" />
+                <span>تراجع</span>
+              </button>
+
+              <button
+                onClick={onRedo}
+                disabled={!canRedo}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1 ${
+                  canRedo
+                    ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-xs cursor-pointer'
+                    : 'bg-slate-800 text-slate-500 cursor-not-allowed opacity-50'
+                }`}
+                title="إعادة الخطوة (Ctrl+Y)"
+              >
+                <Redo2 className="w-3.5 h-3.5" />
+                <span>إعادة</span>
+              </button>
+            </div>
+          )}
+
+          {/* Drag & Move Controls */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                const nextState = !isDragModeActive;
+                setIsDragModeActive(nextState);
+                if (nextState && !selectedKey) {
+                  setSelectedKey('recipientBlock');
+                }
+              }}
+              className={`px-3 py-1 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-xs cursor-pointer ${
+                isDragModeActive
+                  ? 'bg-amber-400 text-slate-950 ring-2 ring-amber-300 font-black'
+                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+              }`}
+              title="تفعيل وضع سحب وتغيير أماكن العبارات والصور والشعار والأختام"
+            >
+              <Move className="w-3.5 h-3.5 text-slate-950" />
+              <span>وضع السحب {isDragModeActive ? '(مُفعّل)' : ''}</span>
+            </button>
+
+            {data.positions && Object.keys(data.positions).length > 0 && (
+              <button
+                onClick={handleResetPositions}
+                className="px-2.5 py-1 bg-red-950/80 text-red-300 hover:bg-red-900 rounded-xl text-xs font-bold transition flex items-center gap-1 border border-red-500/40 shadow-xs cursor-pointer"
+                title="إعادة ضبط مواضع العناصر للتنسيق الافتراضي"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>ضبط الأماكن</span>
+              </button>
+            )}
+          </div>
+
+          {/* Zoom Controls Bar - Horizontally Scrollable to prevent overflow on smaller screens */}
+          <div className="max-w-full overflow-x-auto py-0.5 scrollbar-thin">
+            <div className="flex items-center gap-1 bg-slate-800/90 px-2 py-1 rounded-xl border border-slate-700/60 whitespace-nowrap shrink-0">
+              <span className="text-[10px] text-slate-300 font-normal ml-1">التكبير:</span>
+
+              {/* Zoom Out Button */}
+              <button
+                type="button"
+                onClick={() => {
+                  const modes: Array<'50' | '75' | '100' | '125' | '150'> = ['50', '75', '100', '125', '150'];
+                  if (zoomMode === 'fit') {
+                    setZoomMode('50');
+                  } else {
+                    const idx = modes.indexOf(zoomMode);
+                    if (idx > 0) setZoomMode(modes[idx - 1]);
+                  }
+                }}
+                className="p-1 text-slate-300 hover:text-white hover:bg-slate-700 rounded-lg transition cursor-pointer"
+                title="تصغير العرض"
+              >
+                <ZoomOut className="w-3.5 h-3.5" />
+              </button>
+
+              <button
+                onClick={() => setZoomMode('fit')}
+                className={`px-2 py-0.5 rounded-lg text-[11px] font-bold transition flex items-center gap-1 ${
+                  zoomMode === 'fit' ? 'bg-amber-500 text-slate-950 shadow-xs' : 'text-slate-300 hover:bg-slate-700'
+                }`}
+                title="ملاءمة وحجم العرض التلقائي"
+              >
+                <Maximize2 className="w-3 h-3" />
+                ملاءمة ({Math.round(scale * 100)}%)
+              </button>
+              <button
+                onClick={() => setZoomMode('50')}
+                className={`px-1.5 py-0.5 rounded-lg text-[11px] font-bold transition ${
+                  zoomMode === '50' ? 'bg-amber-500 text-slate-950 shadow-xs' : 'text-slate-300 hover:bg-slate-700'
+                }`}
+              >
+                50%
+              </button>
+              <button
+                onClick={() => setZoomMode('75')}
+                className={`px-1.5 py-0.5 rounded-lg text-[11px] font-bold transition ${
+                  zoomMode === '75' ? 'bg-amber-500 text-slate-950 shadow-xs' : 'text-slate-300 hover:bg-slate-700'
+                }`}
+              >
+                75%
+              </button>
+              <button
+                onClick={() => setZoomMode('100')}
+                className={`px-1.5 py-0.5 rounded-lg text-[11px] font-bold transition ${
+                  zoomMode === '100' ? 'bg-amber-500 text-slate-950 shadow-xs' : 'text-slate-300 hover:bg-slate-700'
+                }`}
+              >
+                100%
+              </button>
+              <button
+                onClick={() => setZoomMode('125')}
+                className={`px-1.5 py-0.5 rounded-lg text-[11px] font-bold transition ${
+                  zoomMode === '125' ? 'bg-amber-500 text-slate-950 shadow-xs' : 'text-slate-300 hover:bg-slate-700'
+                }`}
+              >
+                125%
+              </button>
+              <button
+                onClick={() => setZoomMode('150')}
+                className={`px-1.5 py-0.5 rounded-lg text-[11px] font-bold transition ${
+                  zoomMode === '150' ? 'bg-amber-500 text-slate-950 shadow-xs' : 'text-slate-300 hover:bg-slate-700'
+                }`}
+              >
+                150%
+              </button>
+
+              {/* Zoom In Button */}
+              <button
+                type="button"
+                onClick={() => {
+                  const modes: Array<'50' | '75' | '100' | '125' | '150'> = ['50', '75', '100', '125', '150'];
+                  if (zoomMode === 'fit') {
+                    setZoomMode('100');
+                  } else {
+                    const idx = modes.indexOf(zoomMode);
+                    if (idx >= 0 && idx < modes.length - 1) setZoomMode(modes[idx + 1]);
+                  }
+                }}
+                className="p-1 text-slate-300 hover:text-white hover:bg-slate-700 rounded-lg transition cursor-pointer"
+                title="تكبير العرض"
+              >
+                <ZoomIn className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+
+        </div>
+      )}
+
+      {/* Drag & Move Mode Active: Precision Nudge D-Pad Controls */}
+      {!isExporting && isDragModeActive && (
+        <div className="w-full my-2 p-3 bg-slate-900/95 text-white rounded-2xl shadow-xl border border-amber-500/40 space-y-3 dir-rtl no-print">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
+            
+            {/* Element Selection Dropdown */}
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-xs font-bold text-amber-400 flex items-center gap-1 shrink-0">
+                <Move className="w-3.5 h-3.5 text-amber-400" />
+                العنصر المحدد:
+              </span>
+              <select
+                value={selectedKey || ''}
+                onChange={(e) => setSelectedKey(e.target.value || null)}
+                className="bg-slate-800 text-amber-300 text-xs font-bold px-3 py-1.5 rounded-xl border border-slate-700 focus:border-amber-500 outline-none cursor-pointer max-w-[200px] sm:max-w-xs truncate"
+              >
+                <option value="">-- انقر أو اختر عنصراً --</option>
+                <option value="recipientBlock">اسم المكرّم (الطالب)</option>
+                <option value="titleBlock">العنوان الرئيس (شهادة تقدير)</option>
+                <option value="appreciationBlock">نص التقدير والثناء</option>
+                <option value="signaturesBlock">قسم التوقيعات الرسمية</option>
+                <option value="schoolHeader">ترويسة المدرسة / الجهة</option>
+                <option value="logo">الشعار المؤسسي</option>
+                <option value="stamp">الختم الرسمي</option>
+                <option value="qrCode">رمز QR للتحقق</option>
+                <option value="badge">وسام التميز</option>
+                <option value="dateLocation">التاريخ والمكان</option>
+                <option value="poemBlock">بيت الشعر / المقولة</option>
+                {data.emojis && data.emojis.map((e) => (
+                  <option key={e.id} value={`emoji-${e.id}`}>
+                    ملصق احتفالي: {e.emoji}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Step Size Selector */}
+            <div className="flex items-center gap-1 bg-slate-800/90 p-1 rounded-xl border border-slate-700">
+              <span className="text-[10px] text-slate-400 font-bold px-1.5">خطوة التحريك:</span>
+              {[1, 2, 5, 10].map((step) => (
+                <button
+                  key={step}
+                  type="button"
+                  onClick={() => setNudgeStep(step)}
+                  className={`px-2 py-1 rounded-lg text-xs font-mono font-bold transition cursor-pointer ${
+                    nudgeStep === step
+                      ? 'bg-amber-500 text-slate-950 shadow-xs'
+                      : 'text-slate-300 hover:bg-slate-700'
+                  }`}
+                >
+                  {step}px
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* D-Pad & Coordinates Row */}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="text-right space-y-1">
+              <div className="text-xs font-bold text-slate-200">
+                📍 {selectedKey ? getElementFriendlyName(selectedKey) : 'انقر على أي عنصر بالشهادة لتحديده وتحريكه'}
+              </div>
+              {selectedKey && (
+                <div className="text-xs font-mono text-amber-400 bg-slate-800/80 px-2.5 py-1 rounded-lg inline-block border border-slate-700 dir-ltr text-right">
+                  الموقع الحالي: X = {data.positions?.[selectedKey as keyof ElementPositions]?.x ?? 0}px | Y = {data.positions?.[selectedKey as keyof ElementPositions]?.y ?? 0}px
+                </div>
+              )}
+              <p className="text-[10px] text-slate-400">
+                💡 يمكنك السحب بالمؤشر أو اللمس، أو استخدام أسهم الأزرار أو أسهم لوحة المفاتيح (↑ ↓ ← →)
+              </p>
+            </div>
+
+            {/* Arrow Navigation D-Pad Controls */}
+            <div className="flex items-center gap-3 shrink-0">
+              <div className="relative w-32 h-32 bg-slate-800/90 rounded-2xl p-2 border border-slate-700 shadow-inner flex items-center justify-center">
+                
+                {/* Arrow UP */}
+                <button
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    startNudgeRepeat('up');
+                  }}
+                  onMouseUp={stopNudgeRepeat}
+                  onMouseLeave={stopNudgeRepeat}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    startNudgeRepeat('up');
+                  }}
+                  onTouchEnd={stopNudgeRepeat}
+                  onTouchCancel={stopNudgeRepeat}
+                  onClick={(e) => e.preventDefault()}
+                  disabled={!selectedKey}
+                  className="absolute top-1.5 left-1/2 -translate-x-1/2 w-9 h-9 bg-slate-700 hover:bg-amber-500 hover:text-slate-950 text-white rounded-xl flex items-center justify-center transition active:scale-95 disabled:opacity-30 disabled:hover:bg-slate-700 shadow-sm cursor-pointer select-none"
+                  title="تحريك للأعلى (اضغط مع الاستمرار)"
+                >
+                  <ArrowUp className="w-4 h-4" />
+                </button>
+
+                {/* Arrow DOWN */}
+                <button
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    startNudgeRepeat('down');
+                  }}
+                  onMouseUp={stopNudgeRepeat}
+                  onMouseLeave={stopNudgeRepeat}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    startNudgeRepeat('down');
+                  }}
+                  onTouchEnd={stopNudgeRepeat}
+                  onTouchCancel={stopNudgeRepeat}
+                  onClick={(e) => e.preventDefault()}
+                  disabled={!selectedKey}
+                  className="absolute bottom-1.5 left-1/2 -translate-x-1/2 w-9 h-9 bg-slate-700 hover:bg-amber-500 hover:text-slate-950 text-white rounded-xl flex items-center justify-center transition active:scale-95 disabled:opacity-30 disabled:hover:bg-slate-700 shadow-sm cursor-pointer select-none"
+                  title="تحريك للأسفل (اضغط مع الاستمرار)"
+                >
+                  <ArrowDown className="w-4 h-4" />
+                </button>
+
+                {/* Arrow LEFT */}
+                <button
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    startNudgeRepeat('left');
+                  }}
+                  onMouseUp={stopNudgeRepeat}
+                  onMouseLeave={stopNudgeRepeat}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    startNudgeRepeat('left');
+                  }}
+                  onTouchEnd={stopNudgeRepeat}
+                  onTouchCancel={stopNudgeRepeat}
+                  onClick={(e) => e.preventDefault()}
+                  disabled={!selectedKey}
+                  className="absolute left-1.5 top-1/2 -translate-y-1/2 w-9 h-9 bg-slate-700 hover:bg-amber-500 hover:text-slate-950 text-white rounded-xl flex items-center justify-center transition active:scale-95 disabled:opacity-30 disabled:hover:bg-slate-700 shadow-sm cursor-pointer select-none"
+                  title="تحريك لليسار (اضغط مع الاستمرار)"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                </button>
+
+                {/* Arrow RIGHT */}
+                <button
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    startNudgeRepeat('right');
+                  }}
+                  onMouseUp={stopNudgeRepeat}
+                  onMouseLeave={stopNudgeRepeat}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    startNudgeRepeat('right');
+                  }}
+                  onTouchEnd={stopNudgeRepeat}
+                  onTouchCancel={stopNudgeRepeat}
+                  onClick={(e) => e.preventDefault()}
+                  disabled={!selectedKey}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 w-9 h-9 bg-slate-700 hover:bg-amber-500 hover:text-slate-950 text-white rounded-xl flex flex-col items-center justify-center transition active:scale-95 disabled:opacity-30 disabled:hover:bg-slate-700 shadow-sm cursor-pointer select-none"
+                  title="تحريك لليمين (اضغط مع الاستمرار)"
+                >
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+
+                {/* Center Reset Button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (selectedKey && !selectedKey.startsWith('emoji-') && onUpdateData) {
+                      onUpdateData({
+                        positions: {
+                          ...(data.positions || {}),
+                          [selectedKey]: { x: 0, y: 0 }
+                        }
+                      });
+                    }
+                  }}
+                  disabled={!selectedKey}
+                  className="w-7 h-7 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-full flex items-center justify-center font-black text-[10px] shadow-md disabled:opacity-30 transition cursor-pointer"
+                  title="إعادة ضبط الموقع لمركز الصفحة الاصلي (0,0)"
+                >
+                  0,0
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Responsive Scaled Viewport Area - Full 2D Scrollability & Edge Visibility */}
+      <div className="w-full max-h-[82vh] overflow-auto rounded-2xl border border-slate-300/80 bg-slate-900/10 p-4 sm:p-6 shadow-inner flex relative transition-all dir-ltr">
+        <div
+          style={{
+            width: !isExporting ? `${scaledWidth}px` : `${aspectInfo.baseWidth}px`,
+            height: !isExporting ? `${scaledHeight}px` : `${aspectInfo.baseHeight}px`,
+          }}
+          className="relative shrink-0 m-auto transition-all duration-200"
+        >
+          <div
+            style={{
+              width: `${aspectInfo.baseWidth}px`,
+              height: `${aspectInfo.baseHeight}px`,
+              transform: !isExporting && scale !== 1 ? `scale(${scale})` : undefined,
+              transformOrigin: 'top left',
+            }}
+            className="absolute top-0 left-0"
+          >
+            <div
+              ref={actualCanvasRef}
+              id="certificate-print-area"
+              dir="rtl"
+              className={`relative overflow-hidden bg-white shadow-2xl rounded-lg ${aspectInfo.widthClass} ${fontClass}`}
+              style={{
+                width: `${aspectInfo.baseWidth}px`,
+                height: `${aspectInfo.baseHeight}px`,
+                backgroundColor: data.backgroundColor || '#ffffff',
+                backgroundImage: data.bgGradient && data.bgGradient.enabled
+                  ? (data.bgTextureUrl
+                      ? `url("${data.bgTextureUrl}"), ${getGradientCss(data.bgGradient, data.backgroundColor || '#ffffff')}`
+                      : getGradientCss(data.bgGradient, data.backgroundColor || '#ffffff'))
+                  : (data.bgTextureUrl ? `url("${data.bgTextureUrl}")` : undefined),
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
+                color: data.textColor || '#0f172a',
+                fontSize: `${data.fontSizeScale * 100}%`,
+                letterSpacing: 'normal',
+                wordSpacing: 'normal',
+              }}
+            >
+              {/* Frame borders */}
+              {renderFrameBorders()}
+
+              {/* Custom Background Image / Pattern Layer */}
+              {(data.bgImageUrl || data.bgTextureUrl) && (
+                <div
+                  className="absolute inset-0 pointer-events-none z-0"
+                  style={{
+                    backgroundImage: `url("${data.bgImageUrl || data.bgTextureUrl}")`,
+                    backgroundSize: 'cover',
+                    backgroundPosition: 'center',
+                    backgroundRepeat: 'no-repeat',
+                    opacity: data.bgOpacity ?? 1,
+                    filter: data.bgBlur ? `blur(${data.bgBlur}px)` : 'none',
+                  }}
+                />
+              )}
+
+              {/* Background Color Tint Overlay Layer */}
+              {data.bgOverlayColor && (data.bgOverlayOpacity ?? 0) > 0 && (
+                <div
+                  className="absolute inset-0 pointer-events-none z-0"
+                  style={{
+                    backgroundColor: data.bgOverlayColor,
+                    opacity: data.bgOverlayOpacity ?? 0,
+                  }}
+                />
+              )}
+
+              {/* Optional Text Card Backing Container for legibility over busy background images */}
+              {data.bgCardBacking && (
+                <div
+                  className="absolute inset-8 rounded-2xl pointer-events-none z-0 shadow-lg border border-white/40"
+                  style={{
+                    backgroundColor: data.textColor && data.textColor.toLowerCase().startsWith('#f') 
+                      ? `rgba(15, 23, 42, ${data.bgCardOpacity ?? 0.75})` 
+                      : `rgba(255, 255, 255, ${data.bgCardOpacity ?? 0.82})`,
+                    backdropFilter: 'blur(8px)',
+                  }}
+                />
+              )}
+
+              {/* Smart Guides Overlay during Dragging */}
+              {isDragModeActive && activeGuides && (
+                <>
+                  {activeGuides.vertical && (
+                    <div
+                      className="absolute top-0 bottom-0 border-l-2 border-dashed border-amber-500 z-[100] pointer-events-none transition-all duration-75 flex items-center justify-center"
+                      style={{ left: `${activeGuides.vertical.xPercent}%` }}
+                    >
+                      <div className="bg-amber-600 text-white text-[10px] font-bold px-2.5 py-1 rounded-full shadow-lg whitespace-nowrap opacity-95 -mt-32 flex items-center gap-1.5 border border-amber-300">
+                        <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+                        {activeGuides.vertical.label}
+                      </div>
+                    </div>
+                  )}
+
+                  {activeGuides.horizontal && (
+                    <div
+                      className="absolute left-0 right-0 border-t-2 border-dashed border-amber-500 z-[100] pointer-events-none transition-all duration-75 flex items-center justify-center"
+                      style={{ top: `${activeGuides.horizontal.yPercent}%` }}
+                    >
+                      <div className="bg-amber-600 text-white text-[10px] font-bold px-2.5 py-1 rounded-full shadow-lg whitespace-nowrap opacity-95 -mr-32 flex items-center gap-1.5 border border-amber-300">
+                        <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+                        {activeGuides.horizontal.label}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
+            {/* Background Watermark */}
+            {data.watermarkType !== 'none' && (data.watermarkText || data.watermarkImageUrl || data.schoolName) && (
+              <div
+                className="absolute inset-0 pointer-events-none select-none overflow-hidden z-0 flex items-center justify-center"
+                style={{ pointerEvents: 'none' }}
+              >
+                {data.watermarkPattern === 'repeat' ? (
+                  /* Grid Tiled Repeat Pattern */
+                  <div
+                    className="w-full h-full grid grid-cols-3 grid-rows-3 gap-6 items-center justify-items-center p-8 transition-all"
+                    style={{
+                      transform: `rotate(${data.watermarkRotation ?? -12}deg) scale(${(data.watermarkSize ?? 100) / 100})`,
+                      opacity: data.watermarkOpacity ?? 0.05,
+                    }}
+                  >
+                    {Array.from({ length: 9 }).map((_, idx) => (
+                      <div key={idx} className="flex items-center justify-center text-center">
+                        {data.watermarkType === 'image' && data.watermarkImageUrl ? (
+                          <img
+                            src={data.watermarkImageUrl}
+                            alt="watermark"
+                            className="max-w-[120px] max-h-[120px] object-contain grayscale"
+                          />
+                        ) : (
+                          <span
+                            className={`text-2xl font-extrabold uppercase text-center whitespace-nowrap ${getElementFontClass('watermarkText')}`}
+                            style={{
+                              color: data.primaryColor || '#0f172a',
+                              ...getElementCssStyle('watermarkText'),
+                            }}
+                          >
+                            {data.watermarkText || data.schoolName}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : data.watermarkPattern === 'diagonal-strip' ? (
+                  /* Diagonal Strip Banner Pattern */
+                  <div
+                    className="w-[180%] h-[180%] absolute -top-[40%] -left-[40%] flex flex-col justify-around rotate-[-25deg] pointer-events-none transition-all"
+                    style={{ opacity: data.watermarkOpacity ?? 0.05 }}
+                  >
+                    {Array.from({ length: 5 }).map((_, rowIdx) => (
+                      <div key={rowIdx} className="flex justify-around items-center gap-8 whitespace-nowrap">
+                        {Array.from({ length: 4 }).map((_, colIdx) => (
+                          <div key={colIdx} className="flex items-center gap-3">
+                            {data.watermarkType === 'image' && data.watermarkImageUrl ? (
+                              <img
+                                src={data.watermarkImageUrl}
+                                alt="watermark"
+                                className="h-10 w-auto object-contain grayscale"
+                              />
+                            ) : (
+                              <span
+                                className={`text-xl font-black uppercase ${getElementFontClass('watermarkText')}`}
+                                style={{
+                                  color: data.primaryColor || '#0f172a',
+                                  ...getElementCssStyle('watermarkText'),
+                                }}
+                              >
+                                ★ {data.watermarkText || data.schoolName}
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  /* Single Centered Watermark */
+                  <div
+                    className="flex items-center justify-center transition-transform"
+                    style={{
+                      transform: `rotate(${data.watermarkRotation ?? -12}deg) scale(${(data.watermarkSize ?? 100) / 100})`,
+                      opacity: data.watermarkOpacity ?? 0.05,
+                    }}
+                  >
+                    {data.watermarkType === 'image' && data.watermarkImageUrl ? (
+                      <img
+                        src={data.watermarkImageUrl}
+                        alt="watermark"
+                        className="max-w-[420px] max-h-[300px] object-contain grayscale"
+                      />
+                    ) : (
+                      <span
+                        className={`text-6xl sm:text-7xl font-extrabold uppercase text-center leading-tight max-w-2xl ${getElementFontClass('watermarkText')}`}
+                        style={{
+                          color: data.primaryColor || '#0f172a',
+                          ...getElementCssStyle('watermarkText'),
+                        }}
+                      >
+                        {data.watermarkText || data.schoolName}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Celebratory Emojis */}
+            {data.emojis && data.emojis.map((item) => {
+              const emojiKey = `emoji-${item.id}`;
+              const isSelected = selectedKey === emojiKey && isDragModeActive;
+              return (
+                <div
+                  key={item.id}
+                  onClick={(e) => {
+                    if (isDragModeActive) {
+                      e.stopPropagation();
+                      setSelectedKey(emojiKey);
+                    }
+                  }}
+                  onMouseDown={(e) => isDragModeActive && handleStartDrag(e, emojiKey)}
+                  onTouchStart={(e) => isDragModeActive && handleStartDrag(e, emojiKey)}
+                  className={`absolute select-none transition-transform drop-shadow-md ${
+                    isDragModeActive ? 'cursor-grab active:cursor-grabbing hover:scale-125 hover:ring-2 hover:ring-amber-400 rounded-full' : ''
+                  } ${isSelected ? 'ring-2 ring-amber-500 bg-amber-500/10 p-1 rounded-full z-40' : 'z-20'}`}
+                  style={{
+                    left: `${item.x}%`,
+                    top: `${item.y}%`,
+                    fontSize: `${item.size}px`,
+                  }}
+                >
+                  {item.emoji}
+                  {isSelected && !isExporting && renderOnElementControls()}
+                </div>
+              );
+            })}
+
+            {/* Certificate Content Main Container */}
+            <div className="relative z-10 h-full py-6 sm:py-8 px-6 sm:px-12 flex flex-col justify-between text-center overflow-visible max-w-full w-full box-border break-words transition-all duration-300" style={{ zIndex: 10, position: 'relative' }}>
+              
+              {/* Header Bar (School Header, Logo, Date & QR badge) */}
+              <div className="flex items-center justify-between border-b pb-3 mb-2 gap-2 sm:gap-4 transition-all duration-300 ease-in-out min-h-[50px] max-w-full overflow-visible" style={{ borderColor: `${data.primaryColor}30` }}>
+                
+                {/* School Name & Ministry Header */}
+                <DraggableItem elementKey="schoolHeader">
+                  <div className={`text-right space-y-0.5 max-w-md overflow-visible leading-tight ${getElementFontClass('schoolHeader')}`} style={getElementCssStyle('schoolHeader', '#475569')}>
+                    {(data.showHeaderLine1 ?? true) && (
+                      <div className={`max-w-full break-words whitespace-pre-wrap ${getElementFontClass('schoolHeader')}`} style={getElementCssStyle('schoolHeader', '#475569')}>
+                        <InlineEdit
+                          value={data.headerLine1 ?? 'المملكة العربية السعودية'}
+                          onChange={(val) => handleFieldChange('headerLine1', val)}
+                          placeholder="السطر الأول"
+                          className={`hover:bg-amber-50/60 rounded px-1 transition text-right max-w-full ${getElementFontClass('schoolHeader')}`}
+                          style={getElementCssStyle('schoolHeader', '#475569')}
+                        />
+                      </div>
+                    )}
+                    {(data.showHeaderLine2 ?? true) && (
+                      <div className={`max-w-full break-words whitespace-pre-wrap ${getElementFontClass('schoolHeader')}`} style={getElementCssStyle('schoolHeader', '#475569')}>
+                        <InlineEdit
+                          value={data.headerLine2 ?? 'وزارة التعليم / الجهة المعتمدة'}
+                          onChange={(val) => handleFieldChange('headerLine2', val)}
+                          placeholder="السطر الثاني"
+                          className={`hover:bg-amber-50/60 rounded px-1 transition text-right max-w-full ${getElementFontClass('schoolHeader')}`}
+                          style={getElementCssStyle('schoolHeader', '#475569')}
+                        />
+                      </div>
+                    )}
+                    {data.showHeaderLine3 && (
+                      <div className={`max-w-full break-words whitespace-pre-wrap ${getElementFontClass('schoolHeader')}`} style={getElementCssStyle('schoolHeader', '#475569')}>
+                        <InlineEdit
+                          value={data.headerLine3 ?? 'إدارة التعليم بمحافظة الرياض'}
+                          onChange={(val) => handleFieldChange('headerLine3', val)}
+                          placeholder="السطر الثالث الإضافي"
+                          className={`hover:bg-amber-50/60 rounded px-1 transition text-right max-w-full ${getElementFontClass('schoolHeader')}`}
+                          style={getElementCssStyle('schoolHeader', '#475569')}
+                        />
+                      </div>
+                    )}
+                    {data.showHeaderRightExtra && (
+                      <div className={`max-w-full break-words whitespace-pre-wrap ${getElementFontClass('schoolHeader')}`} style={getElementCssStyle('schoolHeader', '#475569')}>
+                        <InlineEdit
+                          value={data.headerRightExtra ?? 'مكتب التعليم الخاص'}
+                          onChange={(val) => handleFieldChange('headerRightExtra', val)}
+                          placeholder="سطر إضافي يمين"
+                          className={`hover:bg-amber-50/60 rounded px-1 transition text-right max-w-full ${getElementFontClass('schoolHeader')}`}
+                          style={getElementCssStyle('schoolHeader', '#475569')}
+                        />
+                      </div>
+                    )}
+                    {(data.showHeaderSchoolName ?? true) && (
+                      <div className={`max-w-full break-words whitespace-pre-wrap text-right ${getElementFontClass('schoolName')}`} style={getElementCssStyle('schoolName', data.primaryColor || '#1e293b')}>
+                        <InlineEdit
+                          value={data.schoolName}
+                          onChange={(val) => handleFieldChange('schoolName', val)}
+                          placeholder="اسم الجهة / المدرسة"
+                          className={`font-bold max-w-full text-right ${getElementFontClass('schoolName')}`}
+                          style={getElementCssStyle('schoolName', data.primaryColor || '#1e293b')}
+                        />
+                      </div>
+                    )}
+                    {data.showHeaderVisionText && (
+                      <div className="pt-0.5 max-w-full">
+                        <span className="text-[10px] font-bold text-amber-900 bg-amber-100/90 px-2 py-0.5 rounded border border-amber-300/80 inline-block max-w-full break-words">
+                          <InlineEdit
+                            value={data.headerVisionText ?? 'رؤية 2030'}
+                            onChange={(val) => handleFieldChange('headerVisionText', val)}
+                            placeholder="عبارة الهامش الإضافية"
+                          />
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </DraggableItem>
+
+                {/* Institution Logo */}
+                <DraggableItem elementKey="logo">
+                  <div className="flex flex-col items-center px-1 sm:px-2 shrink-0 transition-all duration-300">
+                    {data.logoUrl ? (
+                      <img
+                        src={data.logoUrl}
+                        alt="Logo"
+                        className={`object-contain bg-white/90 p-1 border shadow-md transition-all ${
+                          data.logoSize === 'sm' ? 'h-9 w-9' :
+                          data.logoSize === 'lg' ? 'h-16 w-16' :
+                          data.logoSize === 'xl' ? 'h-20 w-20' : 'h-12 w-12'
+                        } ${
+                          data.logoShape === 'circle' ? 'rounded-full' :
+                          data.logoShape === 'none' ? 'border-none shadow-none bg-transparent p-0' : 'rounded-xl'
+                        }`}
+                      />
+                    ) : (
+                      <div
+                        className={`rounded-full flex items-center justify-center shadow-md text-white font-black text-xl border-2 border-amber-300 transition-all ${
+                          data.logoSize === 'sm' ? 'h-9 w-9 text-base' :
+                          data.logoSize === 'lg' ? 'h-16 w-16 text-2xl' :
+                          data.logoSize === 'xl' ? 'h-20 w-20 text-3xl' : 'h-12 w-12 text-xl'
+                        }`}
+                        style={{ backgroundColor: data.primaryColor }}
+                      >
+                        {data.schoolName ? data.schoolName.charAt(0) : 'ت'}
+                      </div>
+                    )}
+                  </div>
+                </DraggableItem>
+
+                {/* Date & Issue Location */}
+                <DraggableItem elementKey="dateLocation">
+                  <div className={`text-left text-xs text-slate-600 space-y-1 w-auto max-w-none overflow-visible ${getElementFontClass('dateLocation')}`} style={getElementCssStyle('dateLocation')}>
+                    {(data.showHeaderDate ?? true) && (() => {
+                      const mode = data.dateFormatMode || 'both';
+                      const hijriStr = data.issueDateHijri || getTodayHijriDate();
+                      const gregStr = data.issueDateGregorian || data.issueDate || getTodayGregorianDate();
+                      const isStacked = data.dateDisplayLayout === 'stacked';
+
+                      if (mode === 'hijri') {
+                        return (
+                          <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
+                            <span className="shrink-0 font-bold text-slate-600">{data.dateLabel || 'التاريخ'}:</span>
+                            <InlineEdit
+                              value={data.issueDateHijri || hijriStr}
+                              onChange={(val) => {
+                                handleFieldChange('issueDateHijri', val);
+                                handleFieldChange('issueDate', val);
+                              }}
+                              placeholder="التاريخ الهجري"
+                              className="font-bold text-slate-800 tracking-normal"
+                              style={{ fontVariantNumeric: 'tabular-nums' }}
+                            />
+                          </div>
+                        );
+                      }
+
+                      if (mode === 'gregorian') {
+                        return (
+                          <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
+                            <span className="shrink-0 font-bold text-slate-600">{data.dateLabel || 'التاريخ'}:</span>
+                            <InlineEdit
+                              value={data.issueDateGregorian || data.issueDate || gregStr}
+                              onChange={(val) => {
+                                handleFieldChange('issueDateGregorian', val);
+                                handleFieldChange('issueDate', val);
+                              }}
+                              placeholder="التاريخ الميلادي"
+                              className="font-bold text-slate-800 tracking-normal"
+                              style={{ fontVariantNumeric: 'tabular-nums' }}
+                            />
+                          </div>
+                        );
+                      }
+
+                      // Mode 'both'
+                      if (isStacked) {
+                        return (
+                          <div className="space-y-0.5 text-right">
+                            <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
+                              <span className="shrink-0 text-slate-500 font-bold">الهجري:</span>
+                              <InlineEdit
+                                value={hijriStr}
+                                onChange={(val) => handleFieldChange('issueDateHijri', val)}
+                                placeholder="التاريخ الهجري"
+                                className="font-bold text-slate-800"
+                                style={{ fontVariantNumeric: 'tabular-nums' }}
+                              />
+                            </div>
+                            <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
+                              <span className="shrink-0 text-slate-500 font-bold">الميلادي:</span>
+                              <InlineEdit
+                                value={gregStr}
+                                onChange={(val) => handleFieldChange('issueDateGregorian', val)}
+                                placeholder="التاريخ الميلادي"
+                                className="font-bold text-slate-800"
+                                style={{ fontVariantNumeric: 'tabular-nums' }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      // Single line mode (both)
+                      const combinedDefault = `${hijriStr} - ${gregStr}`;
+                      const combinedValue = (data.issueDateHijri && data.issueDateGregorian) 
+                        ? `${data.issueDateHijri} - ${data.issueDateGregorian}` 
+                        : (data.issueDate || combinedDefault);
+
+                      return (
+                        <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
+                          <span className="shrink-0 font-bold text-slate-600">{data.dateLabel || 'التاريخ'}:</span>
+                          <InlineEdit
+                            value={combinedValue}
+                            onChange={(val) => handleFieldChange('issueDate', val)}
+                            placeholder="التاريخ الهجري والميلادي"
+                            className="font-bold text-slate-800 tracking-normal"
+                            style={{ fontVariantNumeric: 'tabular-nums' }}
+                          />
+                        </div>
+                      );
+                    })()}
+                    {(data.showHeaderPlace ?? true) && (
+                      <div className="flex items-center justify-end gap-1 max-w-full">
+                        <span className="shrink-0">{data.placeLabel || 'المكان'}:</span>
+                        <InlineEdit
+                          value={data.issuePlace}
+                          onChange={(val) => handleFieldChange('issuePlace', val)}
+                          placeholder="المكان"
+                          className="font-medium text-slate-800 max-w-full break-words whitespace-pre-wrap"
+                        />
+                      </div>
+                    )}
+                    {data.showHeaderCertNumber && (
+                      <div className="flex items-center justify-end gap-1 max-w-full">
+                        <span className="shrink-0">{data.certNumberLabel || 'الرقم'}:</span>
+                        <InlineEdit
+                          value={data.certNumber ?? 'REF-1447/0892'}
+                          onChange={(val) => handleFieldChange('certNumber', val)}
+                          placeholder="رقم القيد / المرجع"
+                          className="font-medium text-slate-800 tracking-wide max-w-full break-words whitespace-pre-wrap"
+                        />
+                      </div>
+                    )}
+                    {data.showHeaderLeftExtra1 && (
+                      <div className="flex items-center justify-end gap-1 max-w-full">
+                        <InlineEdit
+                          value={data.headerLeftExtra1 ?? 'نوع الشهادة: معتمدة'}
+                          onChange={(val) => handleFieldChange('headerLeftExtra1', val)}
+                          placeholder="سطر إضافي يسار 1"
+                          className="font-medium text-slate-700 max-w-full break-words whitespace-pre-wrap"
+                        />
+                      </div>
+                    )}
+                    {data.showHeaderLeftExtra2 && (
+                      <div className="flex items-center justify-end gap-1 max-w-full">
+                        <InlineEdit
+                          value={data.headerLeftExtra2 ?? 'الكود: AC-2026'}
+                          onChange={(val) => handleFieldChange('headerLeftExtra2', val)}
+                          placeholder="سطر إضافي يسار 2"
+                          className="font-medium text-slate-700 max-w-full break-words whitespace-pre-wrap"
+                        />
+                      </div>
+                    )}
+                    {data.showQrCode && (data.showVerificationBadge ?? true) && (
+                      <button
+                        onClick={onOpenVerificationModal}
+                        className="text-[9px] text-emerald-700 font-bold flex items-center justify-end gap-1 hover:underline cursor-pointer pt-0.5 max-w-full"
+                      >
+                        <ShieldCheck className="w-3 h-3 text-emerald-600 shrink-0" />
+                        <InlineEdit
+                          value={data.verificationBadgeText ?? 'شهادة موثقة رقمياً'}
+                          onChange={(val) => handleFieldChange('verificationBadgeText', val)}
+                          placeholder="عبارة التوثيق"
+                          className="max-w-full break-words whitespace-pre-wrap"
+                        />
+                      </button>
+                    )}
+                  </div>
+                </DraggableItem>
+
+              </div>
+
+              {/* Certificate Title & Subtitle */}
+              <DraggableItem elementKey="titleBlock" className="my-1.5 transition-all duration-300 max-w-full overflow-visible">
+                <div className="space-y-1.5 max-w-full">
+                  <h1 className="text-3xl sm:text-4xl font-black leading-tight max-w-full overflow-visible break-words">
+                    <InlineEdit
+                      value={data.title}
+                      onChange={(val) => handleFieldChange('title', val)}
+                      placeholder="شهادة شكر وتقدير"
+                      className={`font-black max-w-full ${getElementFontClass('title')}`}
+                      style={getElementCssStyle('title', data.primaryColor)}
+                    />
+                  </h1>
+                  <div className="text-sm sm:text-base font-medium opacity-85 leading-relaxed max-w-full overflow-visible break-words">
+                    <InlineEdit
+                      value={data.subtitle}
+                      onChange={(val) => handleFieldChange('subtitle', val)}
+                      placeholder="العنوان الفرعي"
+                      className={`font-medium max-w-full ${getElementFontClass('subtitle')}`}
+                      style={getElementCssStyle('subtitle', data.secondaryColor)}
+                    />
+                  </div>
+                </div>
+              </DraggableItem>
+
+              {/* Decorative Geometric Divider */}
+              <div className="flex items-center justify-center gap-3 my-2 transition-all duration-300">
+                <div className="h-0.5 w-16 sm:w-24 rounded-full" style={{ backgroundColor: data.primaryColor }} />
+                <div className="w-3 h-3 rotate-45 border shadow-2xs" style={{ backgroundColor: data.secondaryColor, borderColor: data.accentColor }} />
+                <div className="h-0.5 w-16 sm:w-24 rounded-full" style={{ backgroundColor: data.primaryColor }} />
+              </div>
+
+              {/* Recipient Introduction */}
+              <div className={`text-sm sm:text-base font-semibold opacity-90 my-1 transition-all duration-300 max-w-full overflow-visible ${getElementFontClass('recipientIntro')}`} style={getElementCssStyle('recipientIntro')}>
+                <InlineEdit
+                  value={data.recipientIntro}
+                  onChange={(val) => handleFieldChange('recipientIntro', val)}
+                  placeholder="تُمنح هذه الشهادة إلى:"
+                  className={`font-semibold max-w-full ${getElementFontClass('recipientIntro')}`}
+                  style={getElementCssStyle('recipientIntro')}
+                />
+              </div>
+
+              {/* Student Name & Grade Block */}
+              <DraggableItem elementKey="recipientBlock" className="my-2 mx-auto w-full max-w-xl transition-all duration-300 overflow-visible">
+                <div className={`py-2 px-6 sm:px-8 rounded-2xl relative group transition-all duration-300 max-w-full overflow-visible ${
+                  data.showRecipientBox !== false
+                    ? 'bg-amber-500/10 border border-amber-500/20 shadow-xs'
+                    : 'bg-transparent border border-transparent'
+                }`}>
+                  <h2 className="text-2xl sm:text-3xl font-extrabold drop-shadow-xs leading-snug max-w-full overflow-visible break-words">
+                    <InlineEdit
+                      value={data.studentName}
+                      onChange={(val) => handleFieldChange('studentName', val)}
+                      placeholder="اسم الطالب الثلاثي"
+                      className={`font-extrabold max-w-full ${getElementFontClass('studentName')}`}
+                      style={getElementCssStyle('studentName', data.primaryColor)}
+                    />
+                  </h2>
+                  <div className="text-xs sm:text-sm font-bold mt-1 opacity-90 max-w-full overflow-visible break-words whitespace-pre-wrap">
+                    <InlineEdit
+                      value={data.grade}
+                      onChange={(val) => handleFieldChange('grade', val)}
+                      placeholder="(الصف الدراسي)"
+                      className={`font-bold max-w-full ${getElementFontClass('grade')}`}
+                      style={getElementCssStyle('grade', data.secondaryColor)}
+                    />
+                  </div>
+                </div>
+              </DraggableItem>
+
+              {/* Appreciation Text Paragraph */}
+              <DraggableItem elementKey="appreciationBlock" className="max-w-2xl mx-auto mt-0.5 mb-0 px-3 w-full transition-all duration-300 overflow-visible">
+                <InlineEdit
+                  value={data.appreciationText}
+                  onChange={(val) => handleFieldChange('appreciationText', val)}
+                  placeholder="نص التقدير والتكريم..."
+                  multiline
+                  rows={1}
+                  className={`text-sm sm:text-base leading-snug text-slate-800 font-medium max-w-full overflow-visible break-words ${getElementFontClass('appreciationText')}`}
+                  style={getElementCssStyle('appreciationText', data.textColor || '#0f172a')}
+                />
+              </DraggableItem>
+
+              {/* Poetic Verse / Quote */}
+              {(data.showPoemOrQuote ?? true) && data.poemOrQuote && (
+                <DraggableItem elementKey="poemBlock" className="mt-0.5 mb-0 max-w-3xl w-full mx-auto transition-all duration-300">
+                  <div className={`italic text-xs sm:text-sm opacity-90 leading-tight w-full break-words whitespace-pre-wrap ${getElementFontClass('poemOrQuote')}`} style={getElementCssStyle('poemOrQuote', data.primaryColor)}>
+                    <InlineEdit
+                      value={data.poemOrQuote}
+                      onChange={(val) => handleFieldChange('poemOrQuote', val)}
+                      placeholder="بيت شعر أو المقولة..."
+                      multiline
+                      rows={1}
+                      className={`italic w-full text-center break-words whitespace-pre-wrap ${getElementFontClass('poemOrQuote')}`}
+                      style={getElementCssStyle('poemOrQuote', data.primaryColor)}
+                    />
+                  </div>
+                </DraggableItem>
+              )}
+
+              {/* Bottom Dock: Stamp, Badge, QR Verification & Signatures Grouped at Bottom */}
+              <div className="mt-auto w-full max-w-full flex flex-col justify-end shrink-0 pt-1 space-y-1">
+                
+                {/* Badge, Stamp & QR Barcode Verification Row - Positioned directly above Signatures */}
+                <div className="pt-0.5 pb-0.5 flex items-center justify-around flex-wrap gap-3 sm:gap-6 w-full max-w-full min-h-[50px] overflow-hidden transition-all duration-300 ease-in-out">
+                
+                {/* Left: Badge / Award Icon */}
+                {data.showBadge && (
+                  <DraggableItem elementKey="badge">
+                    <div className="flex flex-col items-center transition-all duration-300 max-w-[220px]">
+                      {data.badgeType === 'upload' && data.badgeUrl ? (
+                        <img
+                          src={data.badgeUrl}
+                          alt="Badge"
+                          className={`object-contain drop-shadow-md transition-all ${
+                            data.badgeSize === 'sm' ? 'h-9 w-9' :
+                            data.badgeSize === 'lg' ? 'h-16 w-16' : 'h-12 w-12'
+                          }`}
+                        />
+                      ) : (
+                        <div
+                          className={`rounded-full flex items-center justify-center shadow-md text-white border-2 border-amber-300 transition-all ${
+                            data.badgeSize === 'sm' ? 'w-9 h-9' :
+                            data.badgeSize === 'lg' ? 'w-16 h-16' : 'w-12 h-12'
+                          }`}
+                          style={{ backgroundColor: data.secondaryColor }}
+                        >
+                          {getBadgeIcon(data.badgeIcon)}
+                        </div>
+                      )}
+                      {data.badgeTitle && (
+                        <span
+                          className="text-[10px] font-bold mt-1 px-3 py-0.5 rounded-full shadow-xs text-white max-w-[220px] overflow-visible block text-center break-words whitespace-pre-wrap"
+                          style={{ backgroundColor: data.primaryColor }}
+                        >
+                          <InlineEdit
+                            value={data.badgeTitle}
+                            onChange={(val) => handleFieldChange('badgeTitle', val)}
+                            placeholder="عنوان الوسام"
+                            className="text-white font-bold max-w-full break-words whitespace-pre-wrap"
+                          />
+                        </span>
+                      )}
+                    </div>
+                  </DraggableItem>
+                )}
+
+                {/* Middle: Stamp / Wax Seal with Auto-fit Text Shape */}
+                {data.stamp && data.stamp.show && (
+                  <DraggableItem elementKey="stamp">
+                    <div className="flex flex-col items-center transition-all duration-300" style={{ opacity: data.stamp.opacity ?? 1 }}>
+                      {data.stamp.shape === 'custom' && data.stamp.imageUrl ? (
+                        <div className="flex flex-col items-center">
+                          <img
+                            src={data.stamp.imageUrl}
+                            alt="Stamp"
+                            className={`object-contain drop-shadow-md transition-transform hover:scale-105 ${
+                              data.stamp.size === 'sm' ? 'h-12 w-12' :
+                              data.stamp.size === 'lg' ? 'h-20 w-20' : 'h-16 w-16'
+                            }`}
+                          />
+                          {data.stamp.title && (
+                            <span className="text-[9px] font-extrabold mt-0.5 text-amber-900 max-w-[180px] break-words whitespace-pre-wrap">
+                              {data.stamp.title}
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <div
+                          className={`relative flex flex-col items-center justify-center p-1.5 text-center shadow-sm box-border overflow-visible leading-tight transition-all ${
+                            data.stamp.size === 'sm'
+                              ? (data.stamp.shape === 'rectangle' ? 'min-w-[5rem] min-h-[2.5rem] px-3 py-1' : 'min-w-[3.5rem] min-h-[3.5rem] w-14 h-14')
+                              : data.stamp.size === 'lg'
+                              ? (data.stamp.shape === 'rectangle' ? 'min-w-[7.5rem] min-h-[3.75rem] px-5 py-2' : 'min-w-[5.5rem] min-h-[5.5rem] w-22 h-22')
+                              : (data.stamp.shape === 'rectangle' ? 'min-w-[6.25rem] min-h-[3.125rem] px-4 py-1.5' : 'min-w-[4.5rem] min-h-[4.5rem] w-18 h-18')
+                          } ${
+                            data.stamp.shape === 'wax'
+                              ? 'rounded-full bg-gradient-to-br from-amber-600 to-amber-800 text-white border-2 border-yellow-300 rotate-6 shadow-md'
+                              : data.stamp.shape === 'ribbon'
+                              ? 'rounded-xl bg-indigo-950 text-amber-300 border-2 border-amber-400 shadow-md'
+                              : data.stamp.shape === 'square'
+                              ? 'rounded-2xl border-2 border-dashed bg-amber-50/90'
+                              : data.stamp.shape === 'rectangle'
+                              ? 'rounded-2xl border-2 border-dashed bg-amber-50/90'
+                              : 'rounded-full border-2 border-dashed bg-amber-50/90'
+                          }`}
+                          style={{
+                            borderColor: (data.stamp.shape === 'wax' || data.stamp.shape === 'ribbon') ? undefined : (data.stamp.color || '#b45309'),
+                            color: (data.stamp.shape === 'wax' || data.stamp.shape === 'ribbon') ? undefined : (data.stamp.color || '#b45309')
+                          }}
+                        >
+                          <div className="w-full px-1 max-w-full overflow-visible flex flex-col justify-center items-center my-auto min-h-full text-center">
+                            <InlineEdit
+                              value={data.stamp.title}
+                              onChange={(val) => updateStampField('title', val)}
+                              placeholder="عنوان الختم"
+                              className="text-[9px] sm:text-[10px] font-black uppercase leading-tight max-w-full block break-words whitespace-pre-wrap"
+                            />
+                            <InlineEdit
+                              value={data.stamp.subtext}
+                              onChange={(val) => updateStampField('subtext', val)}
+                              placeholder="نص فرعي"
+                              className="text-[7px] opacity-85 mt-0.5 max-w-full block break-words whitespace-pre-wrap"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </DraggableItem>
+                )}
+
+                {/* Right: Verification Unique Barcode & QR Code */}
+                {data.showQrCode && (
+                  <DraggableItem elementKey="qrCode">
+                    <div
+                      onClick={onOpenVerificationModal}
+                      className="flex flex-col items-center bg-white/95 p-1.5 border border-slate-300 rounded-xl shadow-sm hover:border-amber-500 transition cursor-pointer group/qr hover:scale-105 shrink-0"
+                      title="انقر للتحقق الرقمي من صحة هذه الشهادة عبر المنصة"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        {qrDataUrl ? (
+                          <img src={qrDataUrl} alt="Verification QR" className="w-10 h-10 bg-white p-0.5 rounded border shadow-2xs" />
+                        ) : (
+                          <div className="w-10 h-10 bg-slate-100 rounded border flex items-center justify-center text-slate-400">
+                            <QrCode className="w-5 h-5" />
+                          </div>
+                        )}
+                        
+                        {/* High Quality Barcode Lines & Serial Code */}
+                        <div className="flex flex-col items-center justify-center space-y-0.5">
+                          <div className="flex items-center gap-0.5 h-4.5 px-1 bg-white border border-slate-300 rounded shadow-2xs">
+                            {[2, 1, 3, 1, 2, 4, 1, 2, 3, 1, 2, 1, 3, 2].map((w, i) => (
+                              <div key={i} className="bg-slate-900 h-full" style={{ width: `${w * 1.1}px` }} />
+                            ))}
+                          </div>
+                          <span className="text-[8px] font-mono font-black text-slate-900 tracking-wider">
+                            {verificationCode}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="text-[8px] text-emerald-700 font-bold flex items-center gap-1 mt-0.5 group-hover/qr:underline">
+                        <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
+                        توثيق معتمد
+                      </div>
+                    </div>
+                  </DraggableItem>
+                )}
+
+              </div>
+
+              {/* Signatures Section */}
+              <DraggableItem elementKey="signaturesBlock" className="pt-2 border-t w-full max-w-full overflow-hidden transition-all duration-300 ease-in-out">
+                <div className="flex justify-around items-end gap-2 sm:gap-4 flex-wrap w-full max-w-full px-2 box-border transition-all duration-300 ease-in-out" style={{ borderColor: `${data.primaryColor}25` }}>
+                  {data.signatures && data.signatures.filter(s => s.show).map((sig) => (
+                    <div key={sig.id} className="text-center space-y-0.5 min-w-[110px] max-w-[210px] transition-all duration-300 overflow-hidden shrink-0">
+                      <div className="text-[11px] font-bold text-slate-700 max-w-full overflow-visible break-words">
+                        <InlineEdit
+                          value={sig.title}
+                          onChange={(val) => updateSignatureField(sig.id, 'title', val)}
+                          placeholder="المسمى الوظيفي"
+                          className="font-bold text-slate-700 max-w-full break-words whitespace-pre-wrap"
+                        />
+                      </div>
+                      
+                      <div className="min-h-[2.25rem] h-auto flex items-center justify-center border-b border-dashed border-slate-300 py-0.5 overflow-visible max-w-full">
+                        {sig.type === 'draw' || sig.type === 'upload' ? (
+                          sig.signatureUrl ? (
+                            <img src={sig.signatureUrl} alt="Signature" className="h-full object-contain max-h-12" />
+                          ) : (
+                            <span className="font-serif italic text-base text-slate-900">{sig.name}</span>
+                          )
+                        ) : (
+                          <span
+                            className={`text-lg sm:text-xl font-bold transition-all ${getSignatureFontClass(sig.fontFamily)}`}
+                            style={{ color: sig.color || data.primaryColor || '#0f172a' }}
+                          >
+                            <InlineEdit
+                              value={sig.signatureText || sig.name}
+                              onChange={(val) => updateSignatureField(sig.id, 'signatureText', val)}
+                              placeholder="التوقيع بخط اليد"
+                              className={`text-lg sm:text-xl font-bold max-w-full break-words whitespace-pre-wrap ${getSignatureFontClass(sig.fontFamily)}`}
+                              style={{ color: sig.color || data.primaryColor || '#0f172a' }}
+                            />
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="text-xs font-semibold max-w-full overflow-visible break-words" style={{ color: data.primaryColor }}>
+                        <InlineEdit
+                          value={sig.name}
+                          onChange={(val) => updateSignatureField(sig.id, 'name', val)}
+                          placeholder="اسم الموقع"
+                          className="font-semibold max-w-full break-words whitespace-pre-wrap"
+                          style={{ color: data.primaryColor }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </DraggableItem>
+
+              </div>
+
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  );
+};

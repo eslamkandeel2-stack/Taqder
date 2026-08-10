@@ -1,0 +1,537 @@
+// Helper to convert OKLCH, OKLAB, and modern color strings to RGB/RGBA strings for html2canvas compatibility
+
+export function oklabToRgbStr(oklabStr: string): string {
+  try {
+    const clean = oklabStr.replace(/var\([^,)]*,\s*([^)]+)\)/gi, '$1').replace(/var\([^)]+\)/gi, '1');
+    const match = clean.match(/oklab\(\s*([-\+\d.e%]+|none)[\s,]+([-\+\d.e%]+|none)[\s,]+([-\+\d.e%]+|none)(?:\s*[\/\,]\s*([-\+\d.e%]+|none))?\s*\)/i);
+    if (!match) return 'rgb(0, 0, 0)';
+
+    let l = match[1] === 'none' ? 0 : parseFloat(match[1]);
+    if (match[1].endsWith('%')) l = l / 100;
+    if (l > 1) l = l / 100;
+
+    let a_val = match[2] === 'none' ? 0 : parseFloat(match[2]);
+    if (match[2].endsWith('%')) a_val = (parseFloat(match[2]) / 100) * 0.4;
+
+    let b_val = match[3] === 'none' ? 0 : parseFloat(match[3]);
+    if (match[3].endsWith('%')) b_val = (parseFloat(match[3]) / 100) * 0.4;
+
+    let alpha = 1;
+    if (match[4] && match[4] !== 'none') {
+      alpha = parseFloat(match[4]);
+      if (match[4].endsWith('%')) alpha = alpha / 100;
+      if (isNaN(alpha)) alpha = 1;
+    }
+
+    const l_ = l + 0.3963377774 * a_val + 0.2158037573 * b_val;
+    const m_ = l - 0.1055613458 * a_val - 0.0638541728 * b_val;
+    const s_ = l - 0.0894841775 * a_val - 1.2914855480 * b_val;
+
+    const l3 = l_ ** 3;
+    const m3 = m_ ** 3;
+    const s3 = s_ ** 3;
+
+    let r = +4.0767416621 * l3 - 3.3077115913 * m3 + 0.2309699292 * s3;
+    let g = -1.2684380046 * l3 + 2.6097574011 * m3 - 0.3413193965 * s3;
+    let b = -0.0041960863 * l3 - 0.7034186147 * m3 + 1.7076147010 * s3;
+
+    const toSrgb = (x: number) => {
+      x = Math.max(0, Math.min(1, x));
+      return x <= 0.0031308 ? 12.92 * x : 1.055 * Math.pow(x, 1 / 2.4) - 0.055;
+    };
+
+    const r255 = Math.round(toSrgb(r) * 255);
+    const g255 = Math.round(toSrgb(g) * 255);
+    const b255 = Math.round(toSrgb(b) * 255);
+
+    if (alpha < 1) {
+      return `rgba(${r255}, ${g255}, ${b255}, ${alpha.toFixed(3)})`;
+    }
+    return `rgb(${r255}, ${g255}, ${b255})`;
+  } catch (e) {
+    return 'rgb(0, 0, 0)';
+  }
+}
+
+export function oklchToRgbStr(oklchStr: string): string {
+  try {
+    const clean = oklchStr.replace(/var\([^,)]*,\s*([^)]+)\)/gi, '$1').replace(/var\([^)]+\)/gi, '1');
+    const match = clean.match(/oklch\(\s*([-\+\d.e%]+|none)[\s,]+([-\+\d.e%]+|none)[\s,]+([-\+\d.e%a-z]+|none)(?:\s*[\/\,]\s*([-\+\d.e%]+|none))?\s*\)/i);
+    if (!match) return 'rgb(0, 0, 0)';
+
+    let l = match[1] === 'none' ? 0 : parseFloat(match[1]);
+    if (match[1].endsWith('%')) l = l / 100;
+    if (l > 1) l = l / 100;
+
+    let c = match[2] === 'none' ? 0 : parseFloat(match[2]);
+    if (match[2].endsWith('%')) c = (parseFloat(match[2]) / 100) * 0.4;
+
+    let hStr = match[3] === 'none' ? '0' : match[3];
+    let h = parseFloat(hStr);
+    if (isNaN(h)) h = 0;
+    if (hStr.endsWith('rad')) h = h * (180 / Math.PI);
+    else if (hStr.endsWith('turn')) h = h * 360;
+    else if (hStr.endsWith('grad')) h = h * 0.9;
+
+    let alpha = 1;
+    if (match[4] && match[4] !== 'none') {
+      alpha = parseFloat(match[4]);
+      if (match[4].endsWith('%')) alpha = alpha / 100;
+      if (isNaN(alpha)) alpha = 1;
+    }
+
+    const hRad = (h * Math.PI) / 180;
+    const a_lab = c * Math.cos(hRad);
+    const b_lab = c * Math.sin(hRad);
+
+    const l_ = l + 0.3963377774 * a_lab + 0.2158037573 * b_lab;
+    const m_ = l - 0.1055613458 * a_lab - 0.0638541728 * b_lab;
+    const s_ = l - 0.0894841775 * a_lab - 1.2914855480 * b_lab;
+
+    const l3 = l_ ** 3;
+    const m3 = m_ ** 3;
+    const s3 = s_ ** 3;
+
+    let r = +4.0767416621 * l3 - 3.3077115913 * m3 + 0.2309699292 * s3;
+    let g = -1.2684380046 * l3 + 2.6097574011 * m3 - 0.3413193965 * s3;
+    let b = -0.0041960863 * l3 - 0.7034186147 * m3 + 1.7076147010 * s3;
+
+    const toSrgb = (x: number) => {
+      x = Math.max(0, Math.min(1, x));
+      return x <= 0.0031308 ? 12.92 * x : 1.055 * Math.pow(x, 1 / 2.4) - 0.055;
+    };
+
+    const r255 = Math.round(toSrgb(r) * 255);
+    const g255 = Math.round(toSrgb(g) * 255);
+    const b255 = Math.round(toSrgb(b) * 255);
+
+    if (alpha < 1) {
+      return `rgba(${r255}, ${g255}, ${b255}, ${alpha.toFixed(3)})`;
+    }
+    return `rgb(${r255}, ${g255}, ${b255})`;
+  } catch (e) {
+    return 'rgb(0, 0, 0)';
+  }
+}
+
+let colorCanvasCtx: CanvasRenderingContext2D | null = null;
+let colorTestDiv: HTMLDivElement | null = null;
+
+export function resolveCssColorNative(colorStr: string): string {
+  if (!colorStr || typeof colorStr !== 'string') return colorStr;
+  const trimmed = colorStr.trim();
+  if (!trimmed) return colorStr;
+
+  const lower = trimmed.toLowerCase();
+
+  if (lower.startsWith('oklch')) {
+    const res = oklchToRgbStr(trimmed);
+    if (res && res !== 'rgb(0, 0, 0)') return res;
+  }
+  if (lower.startsWith('oklab') || lower.startsWith('lab') || lower.startsWith('lch')) {
+    const res = oklabToRgbStr(trimmed.replace(/^(lab|lch)/i, 'oklab'));
+    if (res && res !== 'rgb(0, 0, 0)') return res;
+  }
+
+  try {
+    if (typeof document !== 'undefined') {
+      if (!colorCanvasCtx) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 1;
+        canvas.height = 1;
+        colorCanvasCtx = canvas.getContext('2d', { willReadFrequently: true });
+      }
+      if (colorCanvasCtx) {
+        colorCanvasCtx.fillStyle = 'rgba(1, 2, 3, 0.5)';
+        colorCanvasCtx.fillStyle = trimmed;
+        const resolved = colorCanvasCtx.fillStyle;
+        if (
+          resolved &&
+          resolved !== 'rgba(1, 2, 3, 0.5)' &&
+          resolved !== 'rgba(1,2,3,0.5)' &&
+          resolved !== 'rgba(1, 2, 3, 0.500)' &&
+          !/(?:oklch|oklab|lch|lab)\(/i.test(resolved)
+        ) {
+          return resolved;
+        }
+      }
+    }
+  } catch (e) {}
+
+  try {
+    if (typeof document !== 'undefined') {
+      if (!colorTestDiv) {
+        colorTestDiv = document.createElement('div');
+        colorTestDiv.style.position = 'fixed';
+        colorTestDiv.style.left = '-9999px';
+        colorTestDiv.style.top = '-9999px';
+        colorTestDiv.style.visibility = 'hidden';
+        document.body.appendChild(colorTestDiv);
+      }
+      colorTestDiv.style.color = '';
+      colorTestDiv.style.color = trimmed;
+      const computed = window.getComputedStyle(colorTestDiv).color;
+      if (computed && computed !== '' && !/(?:oklch|oklab|lch|lab)\(/i.test(computed)) {
+        return computed;
+      }
+    }
+  } catch (e) {}
+
+  if (lower.includes('oklch')) return oklchToRgbStr(trimmed);
+  if (lower.includes('oklab')) return oklabToRgbStr(trimmed);
+
+  return 'rgb(0, 0, 0)';
+}
+
+export function convertColorString(colorStr: string): string {
+  return resolveCssColorNative(colorStr);
+}
+
+export function replaceAllColorFunctions(input: string): string {
+  if (!input || typeof input !== 'string') return input;
+  if (!/(?:oklch|oklab|lch|lab|color-mix|color)\(/i.test(input)) return input;
+
+  let text = input;
+
+  const funcRegex = /(?:oklch|oklab|lch|lab|color-mix|color)\(/gi;
+  let match: RegExpExecArray | null;
+  let iterations = 0;
+
+  while (iterations < 5000) {
+    funcRegex.lastIndex = 0;
+    match = funcRegex.exec(text);
+    if (!match) break;
+
+    const startIndex = match.index;
+    const openParenIndex = startIndex + match[0].length - 1;
+
+    let depth = 1;
+    let closeParenIndex = -1;
+    for (let i = openParenIndex + 1; i < text.length; i++) {
+      if (text[i] === '(') depth++;
+      else if (text[i] === ')') depth--;
+      if (depth === 0) {
+        closeParenIndex = i;
+        break;
+      }
+    }
+
+    if (closeParenIndex === -1) {
+      let endIdx = text.indexOf(';', openParenIndex);
+      if (endIdx === -1) endIdx = text.indexOf('}', openParenIndex);
+      if (endIdx === -1) endIdx = text.length;
+      text = text.slice(0, startIndex) + 'rgb(0, 0, 0)' + text.slice(endIdx);
+      iterations++;
+      continue;
+    }
+
+    const fullFunc = text.slice(startIndex, closeParenIndex + 1);
+    const converted = resolveCssColorNative(fullFunc);
+
+    text = text.slice(0, startIndex) + converted + text.slice(closeParenIndex + 1);
+    iterations++;
+  }
+
+  // Absolute guarantee fallback: strip any lingering oklch/oklab/lch/lab/color-mix/color calls
+  text = text.replace(/oklch\s*\([^;}]*/gi, 'rgb(0, 0, 0)');
+  text = text.replace(/oklab\s*\([^;}]*/gi, 'rgb(0, 0, 0)');
+  text = text.replace(/lch\s*\([^;}]*/gi, 'rgb(0, 0, 0)');
+  text = text.replace(/lab\s*\([^;}]*/gi, 'rgb(0, 0, 0)');
+  text = text.replace(/color-mix\s*\([^;}]*/gi, 'rgb(0, 0, 0)');
+  text = text.replace(/color\s*\([^;}]*/gi, 'rgb(0, 0, 0)');
+
+  return text;
+}
+
+export function sanitizeOklchInDoc(clonedDoc: Document) {
+  // 1. Preserve external font links (e.g. Google Fonts) and inline converted styles
+  const links = clonedDoc.querySelectorAll('link[rel="stylesheet"]');
+  links.forEach((link) => {
+    const href = (link as HTMLLinkElement).href || '';
+    if (href.includes('fonts.googleapis.com') || href.includes('fonts.gstatic.com') || href.includes('font')) {
+      // KEEP external font stylesheets intact
+      return;
+    }
+    try {
+      const sheet = Array.from(document.styleSheets).find((s) => s.href === href);
+      if (sheet) {
+        let cssText = '';
+        try {
+          const rules = sheet.cssRules || sheet.rules;
+          if (rules) {
+            for (let i = 0; i < rules.length; i++) {
+              cssText += rules[i].cssText + '\n';
+            }
+          }
+        } catch (e) {}
+        if (cssText) {
+          const styleEl = clonedDoc.createElement('style');
+          styleEl.textContent = replaceAllColorFunctions(cssText);
+          clonedDoc.head.appendChild(styleEl);
+          link.remove();
+        }
+      }
+    } catch (e) {
+      // Safe fallback: do not remove link if processing fails
+    }
+  });
+
+  // Ensure any Google Fonts link present in main document head is also in clonedDoc head
+  if (typeof document !== 'undefined') {
+    const mainFontLinks = document.querySelectorAll('link[href*="fonts.googleapis.com"]');
+    mainFontLinks.forEach((fontLink) => {
+      const href = (fontLink as HTMLLinkElement).href;
+      if (!clonedDoc.querySelector(`link[href="${href}"]`)) {
+        const newLink = clonedDoc.createElement('link');
+        newLink.rel = 'stylesheet';
+        newLink.href = href;
+        clonedDoc.head.appendChild(newLink);
+      }
+    });
+  }
+
+  // 2. Sanitize all <style> elements in clonedDoc
+  const styleElements = clonedDoc.querySelectorAll('style');
+  styleElements.forEach((styleEl) => {
+    if (styleEl.textContent && /(?:oklch|oklab|lch|lab|color-mix|color)\(/i.test(styleEl.textContent)) {
+      styleEl.textContent = replaceAllColorFunctions(styleEl.textContent);
+    }
+  });
+
+  // 3. Sanitize all styleSheets in clonedDoc
+  try {
+    const sheets = Array.from(clonedDoc.styleSheets);
+    sheets.forEach((sheet) => {
+      try {
+        const rules = sheet.cssRules || sheet.rules;
+        if (rules) {
+          for (let i = 0; i < rules.length; i++) {
+            const rule = rules[i];
+            if (rule.cssText && /(?:oklch|oklab|lch|lab|color-mix|color)\(/i.test(rule.cssText)) {
+              if ('style' in rule && rule.style) {
+                const cssStyle = (rule as CSSStyleRule).style;
+                for (let j = 0; j < cssStyle.length; j++) {
+                  const prop = cssStyle[j];
+                  const val = cssStyle.getPropertyValue(prop);
+                  if (val && /(?:oklch|oklab|lch|lab|color-mix|color)\(/i.test(val)) {
+                    cssStyle.setProperty(
+                      prop,
+                      replaceAllColorFunctions(val),
+                      cssStyle.getPropertyPriority(prop)
+                    );
+                  }
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        // Safe ignore
+      }
+    });
+  } catch (e) {}
+
+  // Inject explicit Arabic typography fix & flexbox text centering stylesheet
+  const styleFix = clonedDoc.createElement('style');
+  styleFix.textContent = `
+    #certificate-print-area, #certificate-print-area * {
+      letter-spacing: normal !important;
+      word-spacing: normal !important;
+      font-variant-ligatures: normal !important;
+      font-feature-settings: "liga" 1, "dlig" 1 !important;
+      -webkit-font-smoothing: antialiased !important;
+      text-rendering: optimizeLegibility !important;
+    }
+    #certificate-print-area .text-center {
+      text-align: center !important;
+    }
+    #certificate-print-area .justify-center {
+      justify-content: center !important;
+    }
+    #certificate-print-area .items-center {
+      align-items: center !important;
+    }
+    #certificate-print-area .inline-flex {
+      display: inline-flex !important;
+    }
+  `;
+  clonedDoc.head.appendChild(styleFix);
+
+  // 4. Synchronize exact computed styles from live DOM to cloned document
+  const origContainer = typeof document !== 'undefined' ? document.getElementById('certificate-print-area') : null;
+  const clonedContainer = clonedDoc.getElementById('certificate-print-area');
+
+  if (clonedContainer) {
+    clonedContainer.setAttribute('dir', 'rtl');
+    clonedContainer.style.direction = 'rtl';
+    clonedContainer.style.letterSpacing = 'normal';
+    clonedContainer.style.wordSpacing = 'normal';
+  }
+
+  if (origContainer && clonedContainer) {
+    const origList = [origContainer, ...Array.from(origContainer.querySelectorAll('*'))];
+    const clonedList = [clonedContainer, ...Array.from(clonedContainer.querySelectorAll('*'))];
+
+    const len = Math.min(origList.length, clonedList.length);
+    for (let i = 0; i < len; i++) {
+      const origNode = origList[i];
+      const clonedNode = clonedList[i];
+
+      if (origNode instanceof HTMLElement && clonedNode instanceof HTMLElement) {
+        const cs = window.getComputedStyle(origNode);
+
+        // Copy computed colors (resolved to rgb/rgba)
+        if (cs.color) clonedNode.style.color = replaceAllColorFunctions(cs.color);
+        if (cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)' && cs.backgroundColor !== 'transparent') {
+          clonedNode.style.backgroundColor = replaceAllColorFunctions(cs.backgroundColor);
+        }
+        if (cs.backgroundImage && cs.backgroundImage !== 'none') {
+          clonedNode.style.backgroundImage = replaceAllColorFunctions(cs.backgroundImage);
+        }
+        if (cs.boxShadow && cs.boxShadow !== 'none') {
+          clonedNode.style.boxShadow = replaceAllColorFunctions(cs.boxShadow);
+        }
+
+        // Copy computed opacity, zIndex, and transform (crucial for watermarks & rotated elements)
+        if (cs.opacity) clonedNode.style.opacity = cs.opacity;
+        if (cs.zIndex && cs.zIndex !== 'auto') clonedNode.style.zIndex = cs.zIndex;
+        if (cs.transform && cs.transform !== 'none') clonedNode.style.transform = cs.transform;
+
+        // Copy typography & alignment (essential for Arabic text formatting, alignment & line breaks)
+        if (cs.fontFamily) clonedNode.style.fontFamily = cs.fontFamily;
+        if (cs.fontSize) clonedNode.style.fontSize = cs.fontSize;
+        if (cs.fontWeight) clonedNode.style.fontWeight = cs.fontWeight;
+        if (cs.fontStyle) clonedNode.style.fontStyle = cs.fontStyle;
+        if (cs.lineHeight) clonedNode.style.lineHeight = cs.lineHeight;
+        if (cs.textAlign) clonedNode.style.textAlign = cs.textAlign;
+        if (cs.textDecorationLine) clonedNode.style.textDecorationLine = cs.textDecorationLine;
+        if (cs.textTransform) clonedNode.style.textTransform = cs.textTransform;
+        if (cs.whiteSpace) clonedNode.style.whiteSpace = cs.whiteSpace;
+        if (cs.direction) clonedNode.style.direction = cs.direction;
+
+        // Force letterSpacing and wordSpacing to normal for Arabic connected text
+        clonedNode.style.letterSpacing = 'normal';
+        clonedNode.style.wordSpacing = 'normal';
+
+        // Copy borders & corner radii (essential for certificate frames, borders & decorative badges)
+        if (cs.borderStyle && cs.borderStyle !== 'none') clonedNode.style.borderStyle = cs.borderStyle;
+        if (cs.borderWidth && cs.borderWidth !== '0px') clonedNode.style.borderWidth = cs.borderWidth;
+        if (cs.borderColor) clonedNode.style.borderColor = replaceAllColorFunctions(cs.borderColor);
+
+        if (cs.borderTopStyle && cs.borderTopStyle !== 'none') clonedNode.style.borderTopStyle = cs.borderTopStyle;
+        if (cs.borderTopWidth && cs.borderTopWidth !== '0px') clonedNode.style.borderTopWidth = cs.borderTopWidth;
+        if (cs.borderTopColor) clonedNode.style.borderTopColor = replaceAllColorFunctions(cs.borderTopColor);
+
+        if (cs.borderRightStyle && cs.borderRightStyle !== 'none') clonedNode.style.borderRightStyle = cs.borderRightStyle;
+        if (cs.borderRightWidth && cs.borderRightWidth !== '0px') clonedNode.style.borderRightWidth = cs.borderRightWidth;
+        if (cs.borderRightColor) clonedNode.style.borderRightColor = replaceAllColorFunctions(cs.borderRightColor);
+
+        if (cs.borderBottomStyle && cs.borderBottomStyle !== 'none') clonedNode.style.borderBottomStyle = cs.borderBottomStyle;
+        if (cs.borderBottomWidth && cs.borderBottomWidth !== '0px') clonedNode.style.borderBottomWidth = cs.borderBottomWidth;
+        if (cs.borderBottomColor) clonedNode.style.borderBottomColor = replaceAllColorFunctions(cs.borderBottomColor);
+
+        if (cs.borderLeftStyle && cs.borderLeftStyle !== 'none') clonedNode.style.borderLeftStyle = cs.borderLeftStyle;
+        if (cs.borderLeftWidth && cs.borderLeftWidth !== '0px') clonedNode.style.borderLeftWidth = cs.borderLeftWidth;
+
+        if (cs.borderRadius && cs.borderRadius !== '0px') clonedNode.style.borderRadius = cs.borderRadius;
+        if (cs.borderTopLeftRadius && cs.borderTopLeftRadius !== '0px') clonedNode.style.borderTopLeftRadius = cs.borderTopLeftRadius;
+        if (cs.borderTopRightRadius && cs.borderTopRightRadius !== '0px') clonedNode.style.borderTopRightRadius = cs.borderTopRightRadius;
+        if (cs.borderBottomRightRadius && cs.borderBottomRightRadius !== '0px') clonedNode.style.borderBottomRightRadius = cs.borderBottomRightRadius;
+        if (cs.borderBottomLeftRadius && cs.borderBottomLeftRadius !== '0px') clonedNode.style.borderBottomLeftRadius = cs.borderBottomLeftRadius;
+
+        // Copy layout & spacing
+        if (cs.display) clonedNode.style.display = cs.display;
+        if (cs.flexDirection) clonedNode.style.flexDirection = cs.flexDirection;
+        if (cs.justifyContent) clonedNode.style.justifyContent = cs.justifyContent;
+        if (cs.alignItems) clonedNode.style.alignItems = cs.alignItems;
+
+        if (cs.paddingTop) clonedNode.style.paddingTop = cs.paddingTop;
+        if (cs.paddingRight) clonedNode.style.paddingRight = cs.paddingRight;
+        if (cs.paddingBottom) clonedNode.style.paddingBottom = cs.paddingBottom;
+        if (cs.paddingLeft) clonedNode.style.paddingLeft = cs.paddingLeft;
+
+        if (cs.marginTop) clonedNode.style.marginTop = cs.marginTop;
+        if (cs.marginRight) clonedNode.style.marginRight = cs.marginRight;
+        if (cs.marginBottom) clonedNode.style.marginBottom = cs.marginBottom;
+        if (cs.marginLeft) clonedNode.style.marginLeft = cs.marginLeft;
+
+        if (clonedNode.style.cssText && /(?:oklch|oklab|lch|lab|color-mix|color)\(/i.test(clonedNode.style.cssText)) {
+          clonedNode.style.cssText = replaceAllColorFunctions(clonedNode.style.cssText);
+        }
+      } else if (origNode instanceof SVGElement && clonedNode instanceof SVGElement) {
+        const cs = window.getComputedStyle(origNode);
+        if (cs.fill && cs.fill !== 'none') {
+          const resFill = replaceAllColorFunctions(cs.fill);
+          clonedNode.style.fill = resFill;
+          clonedNode.setAttribute('fill', resFill);
+        }
+        if (cs.stroke && cs.stroke !== 'none') {
+          const resStroke = replaceAllColorFunctions(cs.stroke);
+          clonedNode.style.stroke = resStroke;
+          clonedNode.setAttribute('stroke', resStroke);
+        }
+      }
+
+      // Check inline attributes
+      if (clonedNode instanceof HTMLElement || clonedNode instanceof SVGElement) {
+        Array.from(clonedNode.attributes).forEach((attr) => {
+          if (attr.value && /(?:oklch|oklab|lch|lab|color-mix|color)\(/i.test(attr.value)) {
+            clonedNode.setAttribute(attr.name, replaceAllColorFunctions(attr.value));
+          }
+        });
+      }
+    }
+  } else {
+    // Fallback if origContainer is not found
+    const allElements = clonedDoc.querySelectorAll('*');
+    allElements.forEach((el) => {
+      if (el instanceof HTMLElement || el instanceof SVGElement) {
+        if (el instanceof HTMLElement) {
+          el.style.letterSpacing = 'normal';
+          el.style.wordSpacing = 'normal';
+          if (el.style?.cssText && /(?:oklch|oklab|lch|lab|color-mix|color)\(/i.test(el.style.cssText)) {
+            el.style.cssText = replaceAllColorFunctions(el.style.cssText);
+          }
+        }
+        Array.from(el.attributes).forEach((attr) => {
+          if (attr.value && /(?:oklch|oklab|lch|lab|color-mix|color)\(/i.test(attr.value)) {
+            el.setAttribute(attr.name, replaceAllColorFunctions(attr.value));
+          }
+        });
+      }
+    });
+  }
+
+  // 5. Ensure NO text clipping, overflow hidden, or truncated ellipsis in clonedDoc
+  if (clonedContainer) {
+    clonedContainer.style.overflow = 'visible';
+    const clonedElements = clonedContainer.querySelectorAll('*');
+    clonedElements.forEach((el) => {
+      if (el instanceof HTMLElement) {
+        // Ensure text overflow is not hidden
+        el.style.overflow = 'visible';
+        if (el.style.textOverflow === 'ellipsis') {
+          el.style.textOverflow = 'clip';
+        }
+        el.classList.remove('truncate');
+        el.classList.remove('overflow-hidden');
+        el.classList.remove('text-ellipsis');
+
+        // Convert any leftover input/textarea to inline span with full text
+        if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+          const inputEl = el as HTMLInputElement | HTMLTextAreaElement;
+          const span = clonedDoc.createElement('span');
+          span.textContent = inputEl.value || inputEl.placeholder || '';
+          span.className = inputEl.className.replace(/\btruncate\b|\boverflow-hidden\b|\btext-ellipsis\b/g, '');
+          span.style.cssText = inputEl.style.cssText;
+          span.style.overflow = 'visible';
+          span.style.whiteSpace = 'pre-wrap';
+          span.style.wordBreak = 'break-word';
+          span.style.display = 'inline-block';
+          el.parentNode?.replaceChild(span, el);
+        }
+      }
+    });
+  }
+}
+
