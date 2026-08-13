@@ -22,6 +22,7 @@ import {
   generateCertificatePdfFile,
   canWebShareFiles
 } from '../utils/shareUtils';
+import { findCertificateCanvasElement } from '../utils/exportUtils';
 
 interface DirectShareModalProps {
   isOpen: boolean;
@@ -30,6 +31,7 @@ interface DirectShareModalProps {
   certificateData: CertificateData;
   canvasRef: React.RefObject<HTMLDivElement | null>;
   onShowToast: (message: string) => void;
+  onSetExporting?: (exporting: boolean) => void;
 }
 
 const COUNTRY_CODES = [
@@ -52,7 +54,8 @@ export const DirectShareModal: React.FC<DirectShareModalProps> = ({
   initialMode = 'whatsapp',
   certificateData,
   canvasRef,
-  onShowToast
+  onShowToast,
+  onSetExporting
 }) => {
   const [activeTab, setActiveTab] = useState<'whatsapp' | 'email'>(initialMode);
   const [format, setFormat] = useState<'png' | 'pdf'>(activeTab === 'whatsapp' ? 'png' : 'pdf');
@@ -85,15 +88,22 @@ export const DirectShareModal: React.FC<DirectShareModalProps> = ({
 
   // Trigger File Generation
   const prepareCertificateFile = async (formatType: 'png' | 'pdf'): Promise<File> => {
-    const el = getCertElement();
-    if (!el) {
-      throw new Error('عنصر الشهادة غير متوفر للالتقاط');
+    if (onSetExporting) {
+      onSetExporting(true);
+      await new Promise((resolve) => setTimeout(resolve, 250));
     }
+    try {
+      const el = await findCertificateCanvasElement(canvasRef, 12, 100);
 
-    if (formatType === 'png') {
-      return await generateCertificatePngFile(el, certificateData);
-    } else {
-      return await generateCertificatePdfFile(el, certificateData);
+      if (formatType === 'png') {
+        return await generateCertificatePngFile(el, certificateData);
+      } else {
+        return await generateCertificatePdfFile(el, certificateData);
+      }
+    } finally {
+      if (onSetExporting) {
+        onSetExporting(false);
+      }
     }
   };
 

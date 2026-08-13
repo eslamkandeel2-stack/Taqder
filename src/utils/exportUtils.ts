@@ -1,3 +1,18 @@
+import React from 'react';
+
+export async function waitForImagesToLoad(container: HTMLElement): Promise<void> {
+  const images = Array.from(container.querySelectorAll('img'));
+  const promises = images.map((img) => {
+    if (img.complete && img.naturalWidth !== 0) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      img.onload = () => resolve();
+      img.onerror = () => resolve();
+      setTimeout(resolve, 1500);
+    });
+  });
+  await Promise.all(promises);
+}
+
 // Helper to convert OKLCH, OKLAB, and modern color strings to RGB/RGBA strings for html2canvas compatibility
 
 export function oklabToRgbStr(oklabStr: string): string {
@@ -366,6 +381,23 @@ export function sanitizeOklchInDoc(clonedDoc: Document) {
     clonedContainer.style.direction = 'rtl';
     clonedContainer.style.letterSpacing = 'normal';
     clonedContainer.style.wordSpacing = 'normal';
+    clonedContainer.style.transform = 'none';
+    clonedContainer.style.margin = '0';
+    clonedContainer.style.position = 'relative';
+    clonedContainer.style.boxShadow = 'none';
+
+    // Determine target unscaled base dimensions
+    const isPortrait = clonedContainer.classList.contains('aspect-portrait') || clonedContainer.getAttribute('data-aspect') === 'A4-portrait';
+    const isSquare = clonedContainer.classList.contains('aspect-square') || clonedContainer.getAttribute('data-aspect') === 'square';
+    const baseW = isSquare ? 800 : (isPortrait ? 794 : 1123);
+    const baseH = isSquare ? 800 : (isPortrait ? 1123 : 794);
+
+    clonedContainer.style.width = `${baseW}px`;
+    clonedContainer.style.height = `${baseH}px`;
+    clonedContainer.style.minWidth = `${baseW}px`;
+    clonedContainer.style.minHeight = `${baseH}px`;
+    clonedContainer.style.maxWidth = `${baseW}px`;
+    clonedContainer.style.maxHeight = `${baseH}px`;
   }
 
   if (origContainer && clonedContainer) {
@@ -388,14 +420,29 @@ export function sanitizeOklchInDoc(clonedDoc: Document) {
         if (cs.backgroundImage && cs.backgroundImage !== 'none') {
           clonedNode.style.backgroundImage = replaceAllColorFunctions(cs.backgroundImage);
         }
-        if (cs.boxShadow && cs.boxShadow !== 'none') {
+        if (cs.boxShadow && cs.boxShadow !== 'none' && origNode !== origContainer) {
           clonedNode.style.boxShadow = replaceAllColorFunctions(cs.boxShadow);
         }
 
-        // Copy computed opacity, zIndex, and transform (crucial for watermarks & rotated elements)
+        // Copy layout spacing & dimensions (essential for padding, margins, badge boxes & verification containers)
+        if (cs.paddingTop) clonedNode.style.paddingTop = cs.paddingTop;
+        if (cs.paddingRight) clonedNode.style.paddingRight = cs.paddingRight;
+        if (cs.paddingBottom) clonedNode.style.paddingBottom = cs.paddingBottom;
+        if (cs.paddingLeft) clonedNode.style.paddingLeft = cs.paddingLeft;
+
+        if (cs.marginTop && cs.marginTop !== '0px') clonedNode.style.marginTop = cs.marginTop;
+        if (cs.marginRight && cs.marginRight !== '0px') clonedNode.style.marginRight = cs.marginRight;
+        if (cs.marginBottom && cs.marginBottom !== '0px') clonedNode.style.marginBottom = cs.marginBottom;
+        if (cs.marginLeft && cs.marginLeft !== '0px') clonedNode.style.marginLeft = cs.marginLeft;
+
+        if (cs.boxSizing) clonedNode.style.boxSizing = cs.boxSizing;
+
+        // Copy computed opacity, zIndex, and transform (DO NOT copy transform to the root container)
         if (cs.opacity) clonedNode.style.opacity = cs.opacity;
         if (cs.zIndex && cs.zIndex !== 'auto') clonedNode.style.zIndex = cs.zIndex;
-        if (cs.transform && cs.transform !== 'none') clonedNode.style.transform = cs.transform;
+        if (origNode !== origContainer && cs.transform && cs.transform !== 'none') {
+          clonedNode.style.transform = cs.transform;
+        }
 
         // Copy typography & alignment (essential for Arabic text formatting, alignment & line breaks)
         if (cs.fontFamily) clonedNode.style.fontFamily = cs.fontFamily;
@@ -439,21 +486,11 @@ export function sanitizeOklchInDoc(clonedDoc: Document) {
         if (cs.borderBottomRightRadius && cs.borderBottomRightRadius !== '0px') clonedNode.style.borderBottomRightRadius = cs.borderBottomRightRadius;
         if (cs.borderBottomLeftRadius && cs.borderBottomLeftRadius !== '0px') clonedNode.style.borderBottomLeftRadius = cs.borderBottomLeftRadius;
 
-        // Copy layout & spacing
-        if (cs.display) clonedNode.style.display = cs.display;
-        if (cs.flexDirection) clonedNode.style.flexDirection = cs.flexDirection;
-        if (cs.justifyContent) clonedNode.style.justifyContent = cs.justifyContent;
-        if (cs.alignItems) clonedNode.style.alignItems = cs.alignItems;
-
-        if (cs.paddingTop) clonedNode.style.paddingTop = cs.paddingTop;
-        if (cs.paddingRight) clonedNode.style.paddingRight = cs.paddingRight;
-        if (cs.paddingBottom) clonedNode.style.paddingBottom = cs.paddingBottom;
-        if (cs.paddingLeft) clonedNode.style.paddingLeft = cs.paddingLeft;
-
-        if (cs.marginTop) clonedNode.style.marginTop = cs.marginTop;
-        if (cs.marginRight) clonedNode.style.marginRight = cs.marginRight;
-        if (cs.marginBottom) clonedNode.style.marginBottom = cs.marginBottom;
-        if (cs.marginLeft) clonedNode.style.marginLeft = cs.marginLeft;
+        if (origNode !== origContainer) {
+          if (cs.objectFit) clonedNode.style.objectFit = cs.objectFit;
+          if (cs.mixBlendMode) clonedNode.style.mixBlendMode = cs.mixBlendMode;
+          if (cs.filter && cs.filter !== 'none') clonedNode.style.filter = replaceAllColorFunctions(cs.filter);
+        }
 
         if (clonedNode.style.cssText && /(?:oklch|oklab|lch|lab|color-mix|color)\(/i.test(clonedNode.style.cssText)) {
           clonedNode.style.cssText = replaceAllColorFunctions(clonedNode.style.cssText);
@@ -470,6 +507,18 @@ export function sanitizeOklchInDoc(clonedDoc: Document) {
           clonedNode.style.stroke = resStroke;
           clonedNode.setAttribute('stroke', resStroke);
         }
+        if (cs.strokeWidth) {
+          clonedNode.style.strokeWidth = cs.strokeWidth;
+          clonedNode.setAttribute('stroke-width', cs.strokeWidth);
+        }
+        if (cs.strokeDasharray && cs.strokeDasharray !== 'none') {
+          clonedNode.style.strokeDasharray = cs.strokeDasharray;
+          clonedNode.setAttribute('stroke-dasharray', cs.strokeDasharray);
+        }
+        if (cs.strokeLinecap) clonedNode.style.strokeLinecap = cs.strokeLinecap;
+        if (cs.strokeLinejoin) clonedNode.style.strokeLinejoin = cs.strokeLinejoin;
+        if (cs.opacity) clonedNode.style.opacity = cs.opacity;
+        if (cs.transform && cs.transform !== 'none') clonedNode.style.transform = cs.transform;
       }
 
       // Check inline attributes
@@ -505,6 +554,41 @@ export function sanitizeOklchInDoc(clonedDoc: Document) {
   // 5. Ensure NO text clipping, overflow hidden, or truncated ellipsis in clonedDoc
   if (clonedContainer) {
     clonedContainer.style.overflow = 'visible';
+
+    // Remove any interactive UI controls or drag handles cloned into the certificate
+    clonedContainer.querySelectorAll('.drag-handle, [data-editor-control]').forEach((ctrl) => {
+      ctrl.remove();
+    });
+
+    // Convert CSS flex gap to explicit child margins for html2canvas (which ignores flex gap)
+    const allFlexEls = [clonedContainer, ...Array.from(clonedContainer.querySelectorAll('*'))];
+    allFlexEls.forEach((el) => {
+      if (el instanceof HTMLElement) {
+        const computed = window.getComputedStyle(el);
+        if (computed.display === 'flex' || computed.display === 'inline-flex') {
+          const gapVal = computed.gap || computed.columnGap || computed.rowGap;
+          if (gapVal && gapVal !== 'normal' && gapVal !== '0px') {
+            const isColumn = computed.flexDirection.includes('column');
+            const children = Array.from(el.children);
+            for (let k = 1; k < children.length; k++) {
+              const child = children[k];
+              if (child instanceof HTMLElement) {
+                if (isColumn) {
+                  if (!child.style.marginTop) child.style.marginTop = gapVal;
+                } else {
+                  if (computed.direction === 'rtl') {
+                    if (!child.style.marginRight) child.style.marginRight = gapVal;
+                  } else {
+                    if (!child.style.marginLeft) child.style.marginLeft = gapVal;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+
     const clonedElements = clonedContainer.querySelectorAll('*');
     clonedElements.forEach((el) => {
       if (el instanceof HTMLElement) {
@@ -528,10 +612,33 @@ export function sanitizeOklchInDoc(clonedDoc: Document) {
           span.style.whiteSpace = 'pre-wrap';
           span.style.wordBreak = 'break-word';
           span.style.display = 'inline-block';
+          span.style.border = 'none';
+          span.style.background = 'transparent';
+          span.style.outline = 'none';
+          span.style.boxShadow = 'none';
           el.parentNode?.replaceChild(span, el);
         }
       }
     });
   }
+}
+
+export async function findCertificateCanvasElement(
+  canvasRef?: React.RefObject<HTMLDivElement | null>,
+  maxAttempts = 25,
+  delayMs = 100
+): Promise<HTMLElement> {
+  for (let i = 0; i < maxAttempts; i++) {
+    const el =
+      canvasRef?.current ||
+      document.getElementById('certificate-print-area') ||
+      document.querySelector('[data-certificate-canvas="true"]') ||
+      document.querySelector('#certificate-print-area') ||
+      (document.querySelector('.relative.overflow-hidden.bg-white') as HTMLElement);
+
+    if (el) return el as HTMLElement;
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+  throw new Error('لم نتمكن من تحديد لوحة الشهادة لالتقاط الصورة. يرجى التأكد من أنك في واجهة التصميم ثم المحاولة مجدداً.');
 }
 

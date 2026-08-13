@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { CertificateData } from '../types';
 import { generateQRCodeDataUrl, generateVerificationCode } from '../utils/qrUtils';
+import { generateCode39Bars } from '../utils/barcodeUtils';
 import {
   ShieldCheck,
   Search,
@@ -92,7 +93,8 @@ export const VerificationModal: React.FC<Props> = ({
               setSearchedCert(found);
               setNotFound(false);
               const foundCode = found.verificationCode || generateVerificationCode(found.id);
-              generateQRCodeDataUrl(`${window.location.origin}/verify?code=${foundCode}`).then(url => setQrDataUrl(url));
+              const foundUrl = found.driveFileWebViewLink || found.driveFileUrl || `${window.location.origin}/verify?code=${foundCode}`;
+              generateQRCodeDataUrl(foundUrl).then(url => setQrDataUrl(url));
               setIsSearching(false);
               return;
             }
@@ -201,31 +203,46 @@ export const VerificationModal: React.FC<Props> = ({
             <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-5">
               
               {/* Verified Header Banner */}
-              <div className="bg-emerald-500/10 border border-emerald-500/30 p-4 rounded-xl flex items-center justify-between gap-2">
+              <div className={`p-4 rounded-xl flex items-center justify-between gap-2 border ${
+                searchedCert.driveFileWebViewLink
+                  ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-950'
+                  : 'bg-sky-500/10 border-sky-500/30 text-sky-950'
+              }`}>
                 <div className="flex items-center gap-3">
-                  <CheckCircle2 className="w-8 h-8 text-emerald-600 shrink-0" />
+                  {searchedCert.driveFileWebViewLink ? (
+                    <CheckCircle2 className="w-8 h-8 text-emerald-600 shrink-0" />
+                  ) : (
+                    <Cloud className="w-8 h-8 text-sky-600 shrink-0" />
+                  )}
                   <div>
-                    <h4 className="text-sm font-black text-emerald-950 flex items-center gap-1.5">
-                      <span>شهادة موثوقة ومسجلة رسمياً</span>
-                      {searchedCert.driveFileWebViewLink && (
+                    <h4 className="text-sm font-black flex items-center gap-1.5">
+                      <span>{searchedCert.driveFileWebViewLink ? 'موثقة ومحفوظة على Google Drive' : 'مسجلة بالمكتبة السحابية (غير مرفوعة لـ Drive)'}</span>
+                      {searchedCert.driveFileWebViewLink ? (
                         <span className="bg-emerald-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1">
-                          <Cloud className="w-3 h-3" />
+                          <CheckCircle2 className="w-3 h-3" />
                           <span>Google Drive</span>
+                        </span>
+                      ) : (
+                        <span className="bg-sky-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1">
+                          <Cloud className="w-3 h-3" />
+                          <span>سحابة فقط</span>
                         </span>
                       )}
                     </h4>
-                    <p className="text-xs text-emerald-800">
+                    <p className="text-xs opacity-90 mt-0.5">
                       {searchedCert.driveFileWebViewLink
-                        ? 'تم توثيق وحفظ نسخة عالية الدقة من الشهادة في Google Drive'
-                        : 'تم التحقق من مطابقة البيانات مع سجلات المنصة الإلكترونية المعتمَدة'}
+                        ? 'تم رفع نسخة عالية الدقة على Google Drive وتفعيل رابط التوثيق المباشر للباركود ✅'
+                        : 'تمت مطابقة البيانات مع سجلات المكتبة السحابية. يمكنك رفعها على Google Drive لتفعيل رابط التوثيق المباشر للباركود.'}
                     </p>
                   </div>
                 </div>
                 <div className="flex flex-col items-end gap-1 shrink-0">
-                  <span className="bg-emerald-600 text-white text-[10px] font-extrabold px-3 py-1 rounded-full shadow-xs">
-                    الحالة: موثقة ✅
+                  <span className={`text-[10px] font-extrabold px-3 py-1 rounded-full shadow-xs text-white ${
+                    searchedCert.driveFileWebViewLink ? 'bg-emerald-600' : 'bg-sky-600'
+                  }`}>
+                    {searchedCert.driveFileWebViewLink ? 'موثقة بـ Drive 🟢' : 'محفوظة بالسحابة ☁️'}
                   </span>
-                  {searchedCert.driveFileWebViewLink && (
+                  {searchedCert.driveFileWebViewLink ? (
                     <a
                       href={searchedCert.driveFileWebViewLink}
                       target="_blank"
@@ -235,7 +252,14 @@ export const VerificationModal: React.FC<Props> = ({
                       <ExternalLink className="w-3.5 h-3.5" />
                       <span>معاينة بـ Drive</span>
                     </a>
-                  )}
+                  ) : onOpenGoogleDriveModal ? (
+                    <button
+                      onClick={onOpenGoogleDriveModal}
+                      className="text-[10px] font-extrabold text-amber-700 hover:text-amber-900 bg-amber-100 hover:bg-amber-200 px-2 py-0.5 rounded-lg border border-amber-300 transition cursor-pointer"
+                    >
+                      + رفع لـ Drive
+                    </button>
+                  ) : null}
                 </div>
               </div>
 
@@ -289,11 +313,19 @@ export const VerificationModal: React.FC<Props> = ({
                     <div className="font-mono text-base font-black text-slate-900 tracking-widest bg-slate-100 px-3 py-1 rounded-md border text-center">
                       {searchedCert.verificationCode || verificationCode}
                     </div>
-                    {/* Visual Barcode Graphic */}
-                    <div className="flex items-center gap-0.5 h-6 pt-1">
-                      {[3,1,2,4,1,3,2,1,4,2,1,3,1,2,4,2,1,3,1,2,3,1].map((w, i) => (
-                        <div key={i} className="bg-slate-900 h-full" style={{ width: `${w * 1.5}px` }} />
-                      ))}
+                    {/* Dynamic Code 39 Visual Barcode Graphic */}
+                    <div className="bg-white p-1 border rounded flex items-center justify-center pt-1 overflow-hidden max-w-[180px]">
+                      {(() => {
+                        const codeVal = searchedCert.verificationCode || verificationCode;
+                        const { bars, totalWidth } = generateCode39Bars(codeVal);
+                        return (
+                          <svg viewBox={`0 0 ${totalWidth} 26`} className="h-6 w-auto select-none">
+                            {bars.map((bar, idx) => (
+                              <rect key={idx} x={bar.x} y="0" width={bar.width} height="26" fill="#0f172a" />
+                            ))}
+                          </svg>
+                        );
+                      })()}
                     </div>
                   </div>
                 </div>

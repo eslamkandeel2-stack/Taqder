@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { CertificateData } from '../types';
+import { generateVerificationCode } from '../utils/qrUtils';
 import {
   Cloud,
   Search,
@@ -66,7 +67,7 @@ export const CloudLibrary: React.FC<Props> = ({
       updatedAt: new Date().toISOString()
     };
 
-    const index = savedCertificates.findIndex(c => c.id === updatedCert.id);
+    const index = savedCertificates.findIndex(c => c.id === updatedCert.id || (c.verificationCode && c.verificationCode === updatedCert.verificationCode));
     let updatedList: CertificateData[];
     if (index >= 0) {
       updatedList = [...savedCertificates];
@@ -84,15 +85,20 @@ export const CloudLibrary: React.FC<Props> = ({
   const saveCurrentToCloud = () => {
     setSyncStatus('جاري الحفظ...');
     const newId = `cloud-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-    const newVerificationCode = `TQ-${Math.floor(100000 + Math.random() * 900000)}`;
+    const newVerificationCode = generateVerificationCode();
 
     const certToSave: CertificateData = {
       ...currentCertificate,
       id: newId,
-      verificationCode: currentCertificate.verificationCode || newVerificationCode,
+      verificationCode: newVerificationCode,
       isSavedCloud: true,
       createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      driveFileId: undefined,
+      driveFileWebViewLink: undefined,
+      driveFileUrl: undefined,
+      driveUploadedAt: undefined,
+      qrCodeData: `${window.location.origin}/verify?code=${newVerificationCode}`
     };
 
     const updated = [certToSave, ...savedCertificates];
@@ -117,14 +123,23 @@ export const CloudLibrary: React.FC<Props> = ({
     a.click();
   };
 
-  const filtered = savedCertificates.filter(c =>
-    (c.studentName && c.studentName.includes(searchQuery)) ||
-    (c.title && c.title.includes(searchQuery)) ||
-    (c.subject && c.subject.includes(searchQuery)) ||
-    (c.schoolName && c.schoolName.includes(searchQuery)) ||
-    (c.verificationCode && c.verificationCode.includes(searchQuery)) ||
-    (c.driveFileId && c.driveFileId.includes(searchQuery))
-  );
+  const [filterTab, setFilterTab] = useState<'all' | 'cloud' | 'drive'>('all');
+
+  const filtered = savedCertificates.filter(c => {
+    const matchesSearch = (
+      (c.studentName && c.studentName.includes(searchQuery)) ||
+      (c.title && c.title.includes(searchQuery)) ||
+      (c.subject && c.subject.includes(searchQuery)) ||
+      (c.schoolName && c.schoolName.includes(searchQuery)) ||
+      (c.verificationCode && c.verificationCode.includes(searchQuery)) ||
+      (c.driveFileId && c.driveFileId.includes(searchQuery))
+    );
+    if (!matchesSearch) return false;
+    const hasDrive = !!(c.driveFileWebViewLink || c.driveFileUrl || c.driveFileId);
+    if (filterTab === 'cloud') return !hasDrive;
+    if (filterTab === 'drive') return hasDrive;
+    return true;
+  });
 
   return (
     <div className="max-w-7xl mx-auto space-y-6 text-right">
@@ -173,21 +188,51 @@ export const CloudLibrary: React.FC<Props> = ({
       </div>
 
       {/* Search & Actions Bar */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
-        <div className="relative w-full sm:w-80">
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="بحث باسم الطالب، المدرسة، أومعرف التوثيق..."
-            className="w-full pr-9 pl-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500"
-          />
-          <Search className="w-4 h-4 text-slate-400 absolute right-3 top-2.5" />
+      <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+        <div className="flex flex-col sm:flex-row items-center gap-3 flex-1">
+          <div className="relative w-full sm:w-72">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="بحث باسم الطالب، المدرسة، أومعرف التوثيق..."
+              className="w-full pr-9 pl-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500"
+            />
+            <Search className="w-4 h-4 text-slate-400 absolute right-3 top-2.5" />
+          </div>
+
+          {/* Filter Tabs */}
+          <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs w-full sm:w-auto">
+            <button
+              onClick={() => setFilterTab('all')}
+              className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer flex-1 sm:flex-none text-center ${
+                filterTab === 'all' ? 'bg-slate-900 text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              الكل ({savedCertificates.length})
+            </button>
+            <button
+              onClick={() => setFilterTab('cloud')}
+              className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer flex-1 sm:flex-none text-center ${
+                filterTab === 'cloud' ? 'bg-sky-600 text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              السحابة فقط ☁️ ({savedCertificates.filter(c => !(c.driveFileWebViewLink || c.driveFileUrl || c.driveFileId)).length})
+            </button>
+            <button
+              onClick={() => setFilterTab('drive')}
+              className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer flex-1 sm:flex-none text-center ${
+                filterTab === 'drive' ? 'bg-amber-500 text-slate-950 font-extrabold shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              موثقة بـ Drive 🟢 ({savedCertificates.filter(c => !!(c.driveFileWebViewLink || c.driveFileUrl || c.driveFileId)).length})
+            </button>
+          </div>
         </div>
 
         <button
           onClick={exportBackupJSON}
-          className="w-full sm:w-auto px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 cursor-pointer"
+          className="w-full lg:w-auto px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 cursor-pointer shrink-0"
         >
           <HardDrive className="w-4 h-4" /> تصدير نسخة احتياطية (JSON)
         </button>

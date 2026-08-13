@@ -1,7 +1,7 @@
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import { CertificateData } from '../types';
-import { sanitizeOklchInDoc } from './exportUtils';
+import { sanitizeOklchInDoc, waitForImagesToLoad } from './exportUtils';
 
 export async function generateCertificatePngFile(
   element: HTMLElement,
@@ -11,6 +11,7 @@ export async function generateCertificatePngFile(
     await document.fonts.ready;
   }
   await new Promise((resolve) => setTimeout(resolve, 200));
+  await waitForImagesToLoad(element);
 
   const canvas = await html2canvas(element, {
     scale: 3,
@@ -52,6 +53,7 @@ export async function generateCertificatePdfFile(
     await document.fonts.ready;
   }
   await new Promise((resolve) => setTimeout(resolve, 200));
+  await waitForImagesToLoad(element);
 
   const canvas = await html2canvas(element, {
     scale: 2.5,

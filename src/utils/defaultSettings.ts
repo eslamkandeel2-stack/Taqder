@@ -20,6 +20,10 @@ export interface DefaultCertificateSettings {
   stampShape: 'circle' | 'square' | 'rectangle' | 'wax' | 'ribbon';
   watermarkText: string;
   autoTodayDate: boolean;
+  canvasMarginTop?: number;
+  canvasMarginBottom?: number;
+  canvasMarginLeft?: number;
+  canvasMarginRight?: number;
 }
 
 export const FALLBACK_DEFAULT_SETTINGS: DefaultCertificateSettings = {
@@ -41,7 +45,11 @@ export const FALLBACK_DEFAULT_SETTINGS: DefaultCertificateSettings = {
   stampColor: '#b45309',
   stampShape: 'wax',
   watermarkText: 'مدرسة التميز النموذجية',
-  autoTodayDate: true
+  autoTodayDate: true,
+  canvasMarginTop: 24,
+  canvasMarginBottom: 24,
+  canvasMarginLeft: 32,
+  canvasMarginRight: 32,
 };
 
 /**
@@ -253,6 +261,10 @@ export function applyDefaultsToCertificate(
       shape: defaults.stampShape || cert.stamp?.shape || 'wax'
     },
     signatures: updatedSignatures,
+    canvasMarginTop: defaults.canvasMarginTop ?? cert.canvasMarginTop ?? 24,
+    canvasMarginBottom: defaults.canvasMarginBottom ?? cert.canvasMarginBottom ?? 24,
+    canvasMarginLeft: defaults.canvasMarginLeft ?? cert.canvasMarginLeft ?? 32,
+    canvasMarginRight: defaults.canvasMarginRight ?? cert.canvasMarginRight ?? 32,
     updatedAt: new Date().toISOString()
   };
 }

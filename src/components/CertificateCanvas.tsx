@@ -1,6 +1,7 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { CertificateData, ElementPositions, ElementStyles, FontOption } from '../types';
 import { generateQRCodeDataUrl, generateVerificationCode } from '../utils/qrUtils';
+import { generateCode39Bars } from '../utils/barcodeUtils';
 import { getGradientCss } from '../utils/gradientUtils';
 import { getTodayHijriDate, getTodayGregorianDate } from '../utils/defaultSettings';
 import {
@@ -44,6 +45,23 @@ interface Props {
   canRedo?: boolean;
   onUndo?: () => void;
   onRedo?: () => void;
+}
+
+function hexToRgba(hexStr?: string, opacity: number = 0.12): string {
+  if (!hexStr) return `rgba(245, 158, 11, ${opacity})`;
+  let clean = hexStr.replace('#', '');
+  if (clean.length === 3) {
+    clean = clean.split('').map(c => c + c).join('');
+  }
+  if (clean.length === 6) {
+    const r = parseInt(clean.substring(0, 2), 16);
+    const g = parseInt(clean.substring(2, 4), 16);
+    const b = parseInt(clean.substring(4, 6), 16);
+    if (!isNaN(r) && !isNaN(g) && !isNaN(b)) {
+      return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+    }
+  }
+  return hexStr;
 }
 
 export const CertificateCanvas: React.FC<Props> = ({
@@ -237,7 +255,13 @@ export const CertificateCanvas: React.FC<Props> = ({
     initialElemY: number;
   } | null>(null);
 
-  const verificationCode = data.verificationCode || generateVerificationCode(data.id);
+  // Memoize verification code to guarantee single generation per certificate ID
+  const verificationCode = useMemo(() => {
+    return data.verificationCode || generateVerificationCode(data.id || data.certificateId, {
+      prefix: data.verificationPrefix,
+      pattern: data.verificationCodePattern
+    });
+  }, [data.verificationCode, data.id, data.certificateId, data.verificationPrefix, data.verificationCodePattern]);
 
   // Measure container width dynamically to scale canvas to fit preview area
   useEffect(() => {
@@ -288,8 +312,8 @@ export const CertificateCanvas: React.FC<Props> = ({
         const deltaXPercent = (deltaXInPx / canvasRect.width) * 100;
         const deltaYPercent = (deltaYInPx / canvasRect.height) * 100;
 
-        const newX = Math.round(Math.max(3, Math.min(76, dragStartRef.current.initialElemX + deltaXPercent)));
-        const newY = Math.round(Math.max(3, Math.min(75, dragStartRef.current.initialElemY + deltaYPercent)));
+        const newX = Math.round(Math.max(0, Math.min(95, dragStartRef.current.initialElemX + deltaXPercent)));
+        const newY = Math.round(Math.max(0, Math.min(95, dragStartRef.current.initialElemY + deltaYPercent)));
 
         const emojiId = draggingKey.replace('emoji-', '');
         if (onUpdateEmojiPos) {
@@ -389,12 +413,25 @@ export const CertificateCanvas: React.FC<Props> = ({
     };
   }, [draggingKey, isDragModeActive, data.emojis, data.positions, onUpdateData, onUpdateEmojiPos, actualCanvasRef]);
 
-  // Generate dynamic QR Code for certificate verification
+  // Generate dynamic QR Code for certificate verification (Links directly to Google Drive if available, otherwise to platform verification URL)
+  const isDriveUploaded = !!(data.driveFileWebViewLink || data.driveFileUrl);
+  const qrTargetUrl = useMemo(() => {
+    return isDriveUploaded
+      ? (data.driveFileWebViewLink || data.driveFileUrl!)
+      : `${window.location.origin}/verify?code=${verificationCode}`;
+  }, [isDriveUploaded, data.driveFileWebViewLink, data.driveFileUrl, verificationCode]);
+
   useEffect(() => {
-    generateQRCodeDataUrl(`${window.location.origin}/verify?code=${verificationCode}`).then(url => {
-      if (url) setQrDataUrl(url);
+    let isMounted = true;
+    generateQRCodeDataUrl(qrTargetUrl).then(url => {
+      if (isMounted && url) {
+        setQrDataUrl(prev => (prev === url ? prev : url));
+      }
     });
-  }, [verificationCode]);
+    return () => {
+      isMounted = false;
+    };
+  }, [qrTargetUrl]);
 
   const handleStartDrag = (
     e: React.MouseEvent | React.TouchEvent,
@@ -484,12 +521,13 @@ export const CertificateCanvas: React.FC<Props> = ({
   }[data.fontFamily] || "font-['Cairo',sans-serif]";
 
   const getElementFontClass = (fieldKey: keyof ElementStyles) => {
+    const isHeaderField = fieldKey === 'schoolHeader' || fieldKey === 'schoolName' || fieldKey === 'dateLocation';
     let customFont = data.elementStyles?.[fieldKey]?.fontFamily;
     if (!customFont && fieldKey === 'schoolName') {
       customFont = data.elementStyles?.schoolHeader?.fontFamily;
     }
     if (!customFont) {
-      customFont = data.fontFamily;
+      customFont = isHeaderField ? (data.headerFontFamily || 'Cairo') : data.fontFamily;
     }
     if (!customFont) return '';
     return {
@@ -561,10 +599,13 @@ export const CertificateCanvas: React.FC<Props> = ({
       };
     }
 
-    const globalScale = data.fontSizeScale ?? 1.0;
+    const isHeaderField = fieldKey === 'schoolHeader' || fieldKey === 'schoolName' || fieldKey === 'dateLocation';
+
+    // Top header fields use independent scale (data.headerFontSizeScale)
+    const activeScale = isHeaderField ? (data.headerFontSizeScale ?? 1.0) : (data.fontSizeScale ?? 1.0);
     const basePx = BASE_FONT_SIZES[fieldKey as string] || 16;
     const elementScale = (style?.fontSize ?? 100) / 100;
-    const computedPx = Math.round(basePx * elementScale * globalScale);
+    const computedPx = Math.round(basePx * elementScale * activeScale);
 
     // Calculate length of element's text to apply dynamic letter-spacing and line-height auto-scaling
     const getFieldValue = (): string => {
@@ -665,7 +706,10 @@ export const CertificateCanvas: React.FC<Props> = ({
       : style?.fontWeight === 'extrabold' ? 900
       : undefined;
 
-    const fontFam = style?.fontFamily || (fieldKey === 'schoolName' ? data.elementStyles?.schoolHeader?.fontFamily : undefined) || data.fontFamily;
+    const headerFont = data.headerFontFamily || 'Cairo';
+    const fontFam = style?.fontFamily 
+      || (fieldKey === 'schoolName' ? data.elementStyles?.schoolHeader?.fontFamily : undefined) 
+      || (isHeaderField ? headerFont : data.fontFamily);
 
     return {
       color: style?.color || defaultColor,
@@ -947,26 +991,21 @@ export const CertificateCanvas: React.FC<Props> = ({
       const cleanClassName = sanitizeCls(className);
       const customLineHeight = (style as Record<string, unknown>)?.lineHeight as string | undefined;
       const customLetterSpacing = (style as Record<string, unknown>)?.letterSpacing as string | undefined;
-      const isRightAligned = cleanClassName.includes('text-right') || styleTextAlign === 'right';
-      const isLeftAligned = cleanClassName.includes('text-left') || styleTextAlign === 'left';
-      const alignClasses = isRightAligned
-        ? 'text-right items-end justify-center'
-        : isLeftAligned
-        ? 'text-left items-start justify-center'
-        : 'text-center items-center justify-center';
+      const styleTextAlign = ((style as Record<string, unknown>)?.textAlign as string | undefined) ||
+        (cleanClassName.includes('text-right') ? 'right' : cleanClassName.includes('text-left') ? 'left' : 'center');
 
       return (
         <span
-          className={`inline-flex flex-col whitespace-pre-wrap break-words max-w-full ${alignClasses} ${cleanClassName}`}
+          className={`inline-block whitespace-pre-wrap break-words max-w-full ${cleanClassName}`}
           style={{
             ...style,
-            lineHeight: customLineHeight || '1.5',
+            textAlign: styleTextAlign,
+            lineHeight: customLineHeight || '1.4',
             letterSpacing: customLetterSpacing || 'normal',
             overflow: 'visible',
             textOverflow: 'clip',
             wordBreak: 'break-word',
             overflowWrap: 'break-word',
-            alignSelf: isRightAligned ? 'flex-end' : isLeftAligned ? 'flex-start' : 'center',
           }}
         >
           {value || placeholder}
@@ -1016,13 +1055,14 @@ export const CertificateCanvas: React.FC<Props> = ({
     const itemsClass = isRightAligned ? 'items-end' : isLeftAligned ? 'items-start' : 'items-center';
 
     return (
-      <div className={`relative group/inline w-full flex flex-col justify-center ${itemsClass}`}>
+      <div className={`relative group/inline flex-1 min-w-0 max-w-full inline-flex flex-col justify-center ${itemsClass}`}>
         <input
           type="text"
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
-          className={`${sanitizeCls(className)} bg-transparent border-0 p-0 m-0 hover:border-amber-400/80 focus:border-amber-500 focus:bg-white/95 focus:ring-2 focus:ring-amber-400/50 rounded-lg transition-all outline-none ${alignClass} w-full min-w-0`}
+          size={Math.max((value || placeholder || '').length + 1, 4)}
+          className={`${sanitizeCls(className)} bg-transparent border-0 p-0 m-0 hover:border-amber-400/80 focus:border-amber-500 focus:bg-white/95 focus:ring-2 focus:ring-amber-400/50 rounded-lg transition-all outline-none ${alignClass} max-w-full min-w-[60px]`}
           style={{
             ...style,
             lineHeight: customLineHeight || 'inherit',
@@ -1202,12 +1242,12 @@ export const CertificateCanvas: React.FC<Props> = ({
               }}
             />
             {[
-              'top-1 left-1 scale-100',
-              'top-1 right-1 -scale-x-100',
-              'bottom-1 left-1 -scale-y-100',
-              'bottom-1 right-1 -scale-x-100 -scale-y-100',
-            ].map((cls, i) => (
-              <div key={i} className={`absolute ${cls} w-16 h-16 pointer-events-none`}>
+              { pos: 'top-1 left-1', tf: 'none' },
+              { pos: 'top-1 right-1', tf: 'scaleX(-1)' },
+              { pos: 'bottom-1 left-1', tf: 'scaleY(-1)' },
+              { pos: 'bottom-1 right-1', tf: 'scale(-1, -1)' },
+            ].map((item, i) => (
+              <div key={i} className={`absolute ${item.pos} w-16 h-16 pointer-events-none`} style={{ transform: item.tf }}>
                 <svg viewBox="0 0 100 100" fill="none" stroke={frameColor} strokeWidth={Math.max(2, bwScale)}>
                   <path d="M10 90 C 20 50, 50 20, 90 10" />
                   <path d="M30 65 C 20 60, 15 45, 25 45 C 35 45, 35 60, 30 65" fill={frameSecColor} />
@@ -1251,12 +1291,12 @@ export const CertificateCanvas: React.FC<Props> = ({
             ].map((pos, i) => (
               <div key={i} className={`absolute ${pos} w-12 h-12 pointer-events-none flex items-center justify-center`}>
                 <div
-                  className="w-10 h-10 transform rotate-45 flex items-center justify-center border shadow-xs"
-                  style={{ backgroundColor: frameColor, borderColor: frameSecColor, borderWidth: `${wPx}px` }}
+                  className="w-10 h-10 flex items-center justify-center border shadow-xs"
+                  style={{ transform: 'rotate(45deg)', backgroundColor: frameColor, borderColor: frameSecColor, borderWidth: `${wPx}px` }}
                 >
                   <div
-                    className="w-7 h-7 transform rotate-45 flex items-center justify-center"
-                    style={{ backgroundColor: frameSecColor }}
+                    className="w-7 h-7 flex items-center justify-center"
+                    style={{ transform: 'rotate(45deg)', backgroundColor: frameSecColor }}
                   >
                     <div className="w-3 h-3 rounded-full" style={{ backgroundColor: frameColor }} />
                   </div>
@@ -1290,12 +1330,12 @@ export const CertificateCanvas: React.FC<Props> = ({
               }}
             />
             {[
-              'top-1 left-1',
-              'top-1 right-1 -scale-x-100',
-              'bottom-1 left-1 -scale-y-100',
-              'bottom-1 right-1 -scale-x-100 -scale-y-100',
-            ].map((cls, i) => (
-              <div key={i} className={`absolute ${cls} w-16 h-16 pointer-events-none`}>
+              { pos: 'top-1 left-1', tf: 'none' },
+              { pos: 'top-1 right-1', tf: 'scaleX(-1)' },
+              { pos: 'bottom-1 left-1', tf: 'scaleY(-1)' },
+              { pos: 'bottom-1 right-1', tf: 'scale(-1, -1)' },
+            ].map((item, i) => (
+              <div key={i} className={`absolute ${item.pos} w-16 h-16 pointer-events-none`} style={{ transform: item.tf }}>
                 <svg viewBox="0 0 100 100" fill="currentColor" style={{ color: frameColor }}>
                   <path d="M10 10 H80 V20 H20 V80 H10 Z" />
                   <circle cx="35" cy="35" r="8" fill={frameSecColor} />
@@ -1375,7 +1415,7 @@ export const CertificateCanvas: React.FC<Props> = ({
               'bottom-2 right-2',
             ].map((pos, i) => (
               <div key={i} className={`absolute ${pos} w-10 h-10 pointer-events-none flex items-center justify-center`}>
-                <div className="w-8 h-8 rounded-md transform rotate-45 flex items-center justify-center shadow-xs" style={{ backgroundColor: frameSecColor }}>
+                <div className="w-8 h-8 rounded-md flex items-center justify-center shadow-xs" style={{ transform: 'rotate(45deg)', backgroundColor: frameSecColor }}>
                   <div className="w-4 h-4 rounded-xs" style={{ backgroundColor: frameColor }} />
                 </div>
               </div>
@@ -1406,19 +1446,19 @@ export const CertificateCanvas: React.FC<Props> = ({
                 border: `${wPx}px solid ${frameSecColor}`,
               }}
             />
-            <div className="absolute top-0 right-1/2 translate-x-1/2 pointer-events-none flex flex-col items-center">
+            <div className="absolute top-0 left-1/2 pointer-events-none flex flex-col items-center" style={{ transform: 'translateX(-50%)' }}>
               <svg width="120" height="24" viewBox="0 0 120 24" fill={frameColor}>
                 <path d="M0 0 C 40 24, 80 24, 120 0 L 100 24 L 20 24 Z" />
                 <circle cx="60" cy="10" r="4" fill={frameSecColor} />
               </svg>
             </div>
             {[
-              'top-2 left-2',
-              'top-2 right-2 -scale-x-100',
-              'bottom-2 left-2 -scale-y-100',
-              'bottom-2 right-2 -scale-x-100 -scale-y-100',
-            ].map((cls, i) => (
-              <div key={i} className={`absolute ${cls} w-12 h-12 pointer-events-none`}>
+              { pos: 'top-2 left-2', tf: 'none' },
+              { pos: 'top-2 right-2', tf: 'scaleX(-1)' },
+              { pos: 'bottom-2 left-2', tf: 'scaleY(-1)' },
+              { pos: 'bottom-2 right-2', tf: 'scale(-1, -1)' },
+            ].map((item, i) => (
+              <div key={i} className={`absolute ${item.pos} w-12 h-12 pointer-events-none`} style={{ transform: item.tf }}>
                 <svg viewBox="0 0 100 100" fill={frameColor}>
                   <path d="M10 10 H90 V25 C 50 25, 25 50, 25 90 H10 Z" />
                   <circle cx="45" cy="45" r="7" fill={frameSecColor} />
@@ -1499,8 +1539,8 @@ export const CertificateCanvas: React.FC<Props> = ({
             ].map((pos, i) => (
               <div
                 key={i}
-                className={`absolute ${pos} w-7 h-7 transform rotate-45 opacity-90 pointer-events-none`}
-                style={{ backgroundColor: frameColor }}
+                className={`absolute ${pos} w-7 h-7 opacity-90 pointer-events-none`}
+                style={{ transform: 'rotate(45deg)', backgroundColor: frameColor }}
               />
             ))}
           </>
@@ -1534,8 +1574,8 @@ export const CertificateCanvas: React.FC<Props> = ({
               }}
             />
             <div
-              className="absolute top-0 right-1/2 translate-x-1/2 text-xs px-6 py-1 font-bold rounded-b-md shadow-md pointer-events-none z-10"
-              style={{ backgroundColor: frameColor, color: frameSecColor }}
+              className="absolute top-0 left-1/2 text-xs px-6 py-1 font-bold rounded-b-md shadow-md pointer-events-none z-10"
+              style={{ transform: 'translateX(-50%)', backgroundColor: frameColor, color: frameSecColor }}
             >
               شهادة شرف رسمية
             </div>
@@ -1680,12 +1720,12 @@ export const CertificateCanvas: React.FC<Props> = ({
               }}
             />
             {[
-              'top-1 left-1',
-              'top-1 right-1 scale-x-[-1]',
-              'bottom-1 left-1 scale-y-[-1]',
-              'bottom-1 right-1 scale-x-[-1] scale-y-[-1]',
-            ].map((cls, i) => (
-              <div key={i} className={`absolute ${cls} w-11 h-11 pointer-events-none`} style={{ color: frameColor }}>
+              { pos: 'top-1 left-1', tf: 'none' },
+              { pos: 'top-1 right-1', tf: 'scaleX(-1)' },
+              { pos: 'bottom-1 left-1', tf: 'scaleY(-1)' },
+              { pos: 'bottom-1 right-1', tf: 'scale(-1, -1)' },
+            ].map((item, i) => (
+              <div key={i} className={`absolute ${item.pos} w-11 h-11 pointer-events-none`} style={{ color: frameColor, transform: item.tf }}>
                 <svg viewBox="0 0 100 100" fill="currentColor">
                   <path d="M10,10 L90,10 L90,20 L20,20 L20,90 L10,90 Z M30,30 L70,30 L30,70 Z M40,10 C20,10 10,20 10,40 C10,25 25,10 40,10 Z" opacity="0.95"/>
                   <circle cx="25" cy="25" r="5" fill={frameSecColor}/>
@@ -1725,7 +1765,7 @@ export const CertificateCanvas: React.FC<Props> = ({
               'bottom-3 right-3',
             ].map((pos, i) => (
               <div key={i} className={`absolute ${pos} w-8 h-8 pointer-events-none flex items-center justify-center border`} style={{ borderColor: frameColor }}>
-                <span className="w-2 h-2 transform rotate-45" style={{ backgroundColor: frameSecColor }} />
+                <span className="w-2 h-2" style={{ transform: 'rotate(45deg)', backgroundColor: frameSecColor }} />
               </div>
             ))}
           </>
@@ -1756,8 +1796,8 @@ export const CertificateCanvas: React.FC<Props> = ({
             />
             {['top-2 left-2', 'top-2 right-2', 'bottom-2 left-2', 'bottom-2 right-2'].map((pos, i) => (
               <div key={i} className={`absolute ${pos} w-8 h-8 pointer-events-none flex items-center justify-center`}>
-                <div className="w-6 h-6 border transform rotate-45 flex items-center justify-center" style={{ backgroundColor: frameColor, borderColor: frameSecColor }}>
-                  <div className="w-3 h-3 transform rotate-45" style={{ backgroundColor: frameSecColor }} />
+                <div className="w-6 h-6 border flex items-center justify-center" style={{ transform: 'rotate(45deg)', backgroundColor: frameColor, borderColor: frameSecColor }}>
+                  <div className="w-3 h-3" style={{ transform: 'rotate(45deg)', backgroundColor: frameSecColor }} />
                 </div>
               </div>
             ))}
@@ -2312,11 +2352,18 @@ export const CertificateCanvas: React.FC<Props> = ({
             <div
               ref={actualCanvasRef}
               id="certificate-print-area"
+              data-certificate-canvas="true"
               dir="rtl"
               className={`relative overflow-hidden bg-white shadow-2xl rounded-lg ${aspectInfo.widthClass} ${fontClass}`}
               style={{
+                boxSizing: 'border-box',
+                position: 'relative',
                 width: `${aspectInfo.baseWidth}px`,
                 height: `${aspectInfo.baseHeight}px`,
+                minWidth: `${aspectInfo.baseWidth}px`,
+                minHeight: `${aspectInfo.baseHeight}px`,
+                maxWidth: `${aspectInfo.baseWidth}px`,
+                maxHeight: `${aspectInfo.baseHeight}px`,
                 backgroundColor: data.backgroundColor || '#ffffff',
                 backgroundImage: data.bgGradient && data.bgGradient.enabled
                   ? (data.bgTextureUrl
@@ -2502,10 +2549,13 @@ export const CertificateCanvas: React.FC<Props> = ({
               </div>
             )}
 
-            {/* Celebratory Emojis */}
+            {/* Celebratory Emojis & Custom Uploaded Images */}
             {data.emojis && data.emojis.map((item) => {
               const emojiKey = `emoji-${item.id}`;
               const isSelected = selectedKey === emojiKey && isDragModeActive;
+              const isBelowText = item.layer === 'below-text';
+              const calculatedZIndex = isSelected ? (isBelowText ? 15 : 40) : (isBelowText ? 5 : 20);
+
               return (
                 <div
                   key={item.id}
@@ -2517,125 +2567,212 @@ export const CertificateCanvas: React.FC<Props> = ({
                   }}
                   onMouseDown={(e) => isDragModeActive && handleStartDrag(e, emojiKey)}
                   onTouchStart={(e) => isDragModeActive && handleStartDrag(e, emojiKey)}
-                  className={`absolute select-none transition-transform drop-shadow-md ${
-                    isDragModeActive ? 'cursor-grab active:cursor-grabbing hover:scale-125 hover:ring-2 hover:ring-amber-400 rounded-full' : ''
-                  } ${isSelected ? 'ring-2 ring-amber-500 bg-amber-500/10 p-1 rounded-full z-40' : 'z-20'}`}
+                  className={`absolute select-none transition-all ${
+                    isDragModeActive ? 'cursor-grab active:cursor-grabbing hover:scale-105 hover:ring-2 hover:ring-amber-400 rounded-lg' : ''
+                  } ${isSelected ? 'ring-2 ring-amber-500 bg-amber-500/10 p-1 rounded-lg shadow-lg' : ''}`}
                   style={{
                     left: `${item.x}%`,
                     top: `${item.y}%`,
-                    fontSize: `${item.size}px`,
+                    zIndex: calculatedZIndex,
                   }}
                 >
-                  {item.emoji}
+                  {item.type === 'image' && item.imageUrl ? (
+                    <img
+                      src={item.imageUrl}
+                      alt={item.emoji || 'رمز احتفالي'}
+                      crossOrigin="anonymous"
+                      className="object-contain max-w-none pointer-events-none select-none drop-shadow-md"
+                      style={{
+                        width: `${item.size}px`,
+                        height: 'auto',
+                        maxHeight: 'none',
+                        maxWidth: 'none',
+                        opacity: item.opacity ?? 1,
+                        transform: `rotate(${item.rotation || 0}deg)`,
+                        mixBlendMode: item.blendMode || 'normal',
+                      }}
+                    />
+                  ) : (
+                    <span
+                      className="inline-flex items-center justify-center leading-none select-none drop-shadow-md text-center"
+                      style={{
+                        fontSize: `${item.size}px`,
+                        width: `${item.size}px`,
+                        height: `${item.size}px`,
+                        opacity: item.opacity ?? 1,
+                        transform: `rotate(${item.rotation || 0}deg)`,
+                        mixBlendMode: item.blendMode || 'normal',
+                        fontFamily: '"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Android Emoji", EmojiSymbols, "Segoe UI Symbol", sans-serif',
+                      }}
+                    >
+                      {item.emoji}
+                    </span>
+                  )}
                   {isSelected && !isExporting && renderOnElementControls()}
                 </div>
               );
             })}
 
             {/* Certificate Content Main Container */}
-            <div className="relative z-10 h-full py-6 sm:py-8 px-6 sm:px-12 flex flex-col justify-between text-center overflow-visible max-w-full w-full box-border break-words transition-all duration-300" style={{ zIndex: 10, position: 'relative' }}>
+            <div
+              className="relative z-10 h-full flex flex-col justify-between text-center overflow-visible max-w-full w-full box-border break-words transition-all duration-300"
+              style={{
+                zIndex: 10,
+                position: 'relative',
+                paddingTop: `${data.canvasMarginTop ?? 24}px`,
+                paddingBottom: `${data.canvasMarginBottom ?? 24}px`,
+                paddingLeft: `${data.canvasMarginLeft ?? 32}px`,
+                paddingRight: `${data.canvasMarginRight ?? 32}px`,
+              }}
+            >
               
               {/* Header Bar (School Header, Logo, Date & QR badge) */}
-              <div className="flex items-center justify-between border-b pb-3 mb-2 gap-2 sm:gap-4 transition-all duration-300 ease-in-out min-h-[50px] max-w-full overflow-visible" style={{ borderColor: `${data.primaryColor}30` }}>
+              <div className="flex items-center justify-between pb-2 mb-1 gap-2 sm:gap-4 transition-all duration-300 ease-in-out min-h-[50px] w-full max-w-full overflow-visible">
                 
                 {/* School Name & Ministry Header */}
                 <DraggableItem elementKey="schoolHeader">
-                  <div className={`text-right space-y-0.5 max-w-md overflow-visible leading-tight ${getElementFontClass('schoolHeader')}`} style={getElementCssStyle('schoolHeader', '#475569')}>
-                    {(data.showHeaderLine1 ?? true) && (
-                      <div className={`max-w-full break-words whitespace-pre-wrap ${getElementFontClass('schoolHeader')}`} style={getElementCssStyle('schoolHeader', '#475569')}>
-                        <InlineEdit
-                          value={data.headerLine1 ?? 'المملكة العربية السعودية'}
-                          onChange={(val) => handleFieldChange('headerLine1', val)}
-                          placeholder="السطر الأول"
-                          className={`hover:bg-amber-50/60 rounded px-1 transition text-right max-w-full ${getElementFontClass('schoolHeader')}`}
-                          style={getElementCssStyle('schoolHeader', '#475569')}
-                        />
+                  {(() => {
+                    const schoolHeaderCss = getElementCssStyle('schoolHeader', '#475569');
+                    const headerTextAlign = schoolHeaderCss.textAlign || 'right';
+                    const headerAlignClass =
+                      headerTextAlign === 'center'
+                        ? 'text-center items-center'
+                        : headerTextAlign === 'left'
+                        ? 'text-left items-start'
+                        : 'text-right items-end';
+
+                    return (
+                      <div
+                        className={`flex flex-col space-y-1 max-w-md overflow-visible leading-tight ${headerAlignClass} ${getElementFontClass('schoolHeader')}`}
+                        style={{
+                          ...schoolHeaderCss,
+                          transform: `translate(${data.headerTextOffsetX || 0}px, ${data.headerTextOffsetY || 0}px)`
+                        }}
+                      >
+                        {(data.showHeaderLine1 ?? true) && (
+                          <div className={`w-full max-w-full break-words whitespace-pre-wrap ${headerAlignClass} ${getElementFontClass('schoolHeader')}`} style={schoolHeaderCss}>
+                            <InlineEdit
+                              value={data.headerLine1 ?? 'المملكة العربية السعودية'}
+                              onChange={(val) => handleFieldChange('headerLine1', val)}
+                              placeholder="السطر الأول"
+                              className={`hover:bg-amber-50/60 rounded px-1 transition max-w-full ${headerAlignClass} ${getElementFontClass('schoolHeader')}`}
+                              style={schoolHeaderCss}
+                            />
+                          </div>
+                        )}
+                        {(data.showHeaderLine2 ?? true) && (
+                          <div className={`w-full max-w-full break-words whitespace-pre-wrap ${headerAlignClass} ${getElementFontClass('schoolHeader')}`} style={schoolHeaderCss}>
+                            <InlineEdit
+                              value={data.headerLine2 ?? 'وزارة التعليم / الجهة المعتمدة'}
+                              onChange={(val) => handleFieldChange('headerLine2', val)}
+                              placeholder="السطر الثاني"
+                              className={`hover:bg-amber-50/60 rounded px-1 transition max-w-full ${headerAlignClass} ${getElementFontClass('schoolHeader')}`}
+                              style={schoolHeaderCss}
+                            />
+                          </div>
+                        )}
+                        {data.showHeaderLine3 && (
+                          <div className={`w-full max-w-full break-words whitespace-pre-wrap ${headerAlignClass} ${getElementFontClass('schoolHeader')}`} style={schoolHeaderCss}>
+                            <InlineEdit
+                              value={data.headerLine3 ?? 'إدارة التعليم بمحافظة الرياض'}
+                              onChange={(val) => handleFieldChange('headerLine3', val)}
+                              placeholder="السطر الثالث الإضافي"
+                              className={`hover:bg-amber-50/60 rounded px-1 transition max-w-full ${headerAlignClass} ${getElementFontClass('schoolHeader')}`}
+                              style={schoolHeaderCss}
+                            />
+                          </div>
+                        )}
+                        {data.showHeaderRightExtra && (
+                          <div className={`w-full max-w-full break-words whitespace-pre-wrap ${headerAlignClass} ${getElementFontClass('schoolHeader')}`} style={schoolHeaderCss}>
+                            <InlineEdit
+                              value={data.headerRightExtra ?? 'مكتب التعليم الخاص'}
+                              onChange={(val) => handleFieldChange('headerRightExtra', val)}
+                              placeholder="سطر إضافي يمين"
+                              className={`hover:bg-amber-50/60 rounded px-1 transition max-w-full ${headerAlignClass} ${getElementFontClass('schoolHeader')}`}
+                              style={schoolHeaderCss}
+                            />
+                          </div>
+                        )}
+                        {(data.showHeaderSchoolName ?? true) && (
+                          <div className={`w-full max-w-full break-words whitespace-pre-wrap ${headerAlignClass} ${getElementFontClass('schoolName')}`} style={getElementCssStyle('schoolName', data.primaryColor || '#1e293b')}>
+                            <InlineEdit
+                              value={data.schoolName}
+                              onChange={(val) => handleFieldChange('schoolName', val)}
+                              placeholder="اسم الجهة / المدرسة"
+                              className={`font-bold max-w-full ${headerAlignClass} ${getElementFontClass('schoolName')}`}
+                              style={getElementCssStyle('schoolName', data.primaryColor || '#1e293b')}
+                            />
+                          </div>
+                        )}
+                        {data.showHeaderVisionText && (
+                          <div className={`pt-0.5 max-w-full ${headerAlignClass}`}>
+                            <span className="text-[10px] font-bold text-amber-900 bg-amber-100/90 px-2 py-0.5 rounded border border-amber-300/80 inline-block max-w-full break-words">
+                              <InlineEdit
+                                value={data.headerVisionText ?? 'رؤية 2030'}
+                                onChange={(val) => handleFieldChange('headerVisionText', val)}
+                                placeholder="عبارة الهامش الإضافية"
+                              />
+                            </span>
+                          </div>
+                        )}
                       </div>
-                    )}
-                    {(data.showHeaderLine2 ?? true) && (
-                      <div className={`max-w-full break-words whitespace-pre-wrap ${getElementFontClass('schoolHeader')}`} style={getElementCssStyle('schoolHeader', '#475569')}>
-                        <InlineEdit
-                          value={data.headerLine2 ?? 'وزارة التعليم / الجهة المعتمدة'}
-                          onChange={(val) => handleFieldChange('headerLine2', val)}
-                          placeholder="السطر الثاني"
-                          className={`hover:bg-amber-50/60 rounded px-1 transition text-right max-w-full ${getElementFontClass('schoolHeader')}`}
-                          style={getElementCssStyle('schoolHeader', '#475569')}
-                        />
-                      </div>
-                    )}
-                    {data.showHeaderLine3 && (
-                      <div className={`max-w-full break-words whitespace-pre-wrap ${getElementFontClass('schoolHeader')}`} style={getElementCssStyle('schoolHeader', '#475569')}>
-                        <InlineEdit
-                          value={data.headerLine3 ?? 'إدارة التعليم بمحافظة الرياض'}
-                          onChange={(val) => handleFieldChange('headerLine3', val)}
-                          placeholder="السطر الثالث الإضافي"
-                          className={`hover:bg-amber-50/60 rounded px-1 transition text-right max-w-full ${getElementFontClass('schoolHeader')}`}
-                          style={getElementCssStyle('schoolHeader', '#475569')}
-                        />
-                      </div>
-                    )}
-                    {data.showHeaderRightExtra && (
-                      <div className={`max-w-full break-words whitespace-pre-wrap ${getElementFontClass('schoolHeader')}`} style={getElementCssStyle('schoolHeader', '#475569')}>
-                        <InlineEdit
-                          value={data.headerRightExtra ?? 'مكتب التعليم الخاص'}
-                          onChange={(val) => handleFieldChange('headerRightExtra', val)}
-                          placeholder="سطر إضافي يمين"
-                          className={`hover:bg-amber-50/60 rounded px-1 transition text-right max-w-full ${getElementFontClass('schoolHeader')}`}
-                          style={getElementCssStyle('schoolHeader', '#475569')}
-                        />
-                      </div>
-                    )}
-                    {(data.showHeaderSchoolName ?? true) && (
-                      <div className={`max-w-full break-words whitespace-pre-wrap text-right ${getElementFontClass('schoolName')}`} style={getElementCssStyle('schoolName', data.primaryColor || '#1e293b')}>
-                        <InlineEdit
-                          value={data.schoolName}
-                          onChange={(val) => handleFieldChange('schoolName', val)}
-                          placeholder="اسم الجهة / المدرسة"
-                          className={`font-bold max-w-full text-right ${getElementFontClass('schoolName')}`}
-                          style={getElementCssStyle('schoolName', data.primaryColor || '#1e293b')}
-                        />
-                      </div>
-                    )}
-                    {data.showHeaderVisionText && (
-                      <div className="pt-0.5 max-w-full">
-                        <span className="text-[10px] font-bold text-amber-900 bg-amber-100/90 px-2 py-0.5 rounded border border-amber-300/80 inline-block max-w-full break-words">
-                          <InlineEdit
-                            value={data.headerVisionText ?? 'رؤية 2030'}
-                            onChange={(val) => handleFieldChange('headerVisionText', val)}
-                            placeholder="عبارة الهامش الإضافية"
-                          />
-                        </span>
-                      </div>
-                    )}
-                  </div>
+                    );
+                  })()}
                 </DraggableItem>
 
                 {/* Institution Logo */}
                 <DraggableItem elementKey="logo">
-                  <div className="flex flex-col items-center px-1 sm:px-2 shrink-0 transition-all duration-300">
+                  <div
+                    className="flex flex-col items-center px-1 sm:px-2 shrink-0 transition-all duration-300"
+                    style={{
+                      transform: `translate(${data.logoOffsetX || 0}px, ${data.logoOffsetY || 0}px) rotate(${data.logoRotation || 0}deg)`,
+                      opacity: data.logoOpacity ?? 1,
+                    }}
+                  >
                     {data.logoUrl ? (
                       <img
                         src={data.logoUrl}
                         alt="Logo"
-                        className={`object-contain bg-white/90 p-1 border shadow-md transition-all ${
-                          data.logoSize === 'sm' ? 'h-9 w-9' :
-                          data.logoSize === 'lg' ? 'h-16 w-16' :
-                          data.logoSize === 'xl' ? 'h-20 w-20' : 'h-12 w-12'
+                        className={`object-contain transition-all ${
+                          data.logoBgMode === 'transparent' || data.logoShape === 'none'
+                            ? 'bg-transparent border-0 shadow-none p-0'
+                            : data.logoBgMode === 'dark'
+                            ? 'bg-slate-900 p-1 shadow-md border border-slate-700'
+                            : 'bg-white/95 p-1 border shadow-md'
                         } ${
                           data.logoShape === 'circle' ? 'rounded-full' :
+                          data.logoShape === 'square' ? 'rounded-none' :
                           data.logoShape === 'none' ? 'border-none shadow-none bg-transparent p-0' : 'rounded-xl'
+                        } ${
+                          !data.logoSizePx ? (
+                            data.logoSize === 'sm' ? 'h-9 w-9' :
+                            data.logoSize === 'lg' ? 'h-16 w-16' :
+                            data.logoSize === 'xl' ? 'h-20 w-20' : 'h-12 w-12'
+                          ) : ''
                         }`}
+                        style={{
+                          ...(data.logoSizePx ? { width: `${data.logoSizePx}px`, height: `${data.logoSizePx}px` } : {}),
+                          ...(data.logoBorderWidth !== undefined ? { borderWidth: `${data.logoBorderWidth}px` } : {}),
+                          ...(data.logoBorderColor ? { borderColor: data.logoBorderColor } : {}),
+                        }}
                       />
                     ) : (
                       <div
                         className={`rounded-full flex items-center justify-center shadow-md text-white font-black text-xl border-2 border-amber-300 transition-all ${
-                          data.logoSize === 'sm' ? 'h-9 w-9 text-base' :
-                          data.logoSize === 'lg' ? 'h-16 w-16 text-2xl' :
-                          data.logoSize === 'xl' ? 'h-20 w-20 text-3xl' : 'h-12 w-12 text-xl'
+                          !data.logoSizePx ? (
+                            data.logoSize === 'sm' ? 'h-9 w-9 text-base' :
+                            data.logoSize === 'lg' ? 'h-16 w-16 text-2xl' :
+                            data.logoSize === 'xl' ? 'h-20 w-20 text-3xl' : 'h-12 w-12 text-xl'
+                          ) : ''
                         }`}
-                        style={{ backgroundColor: data.primaryColor }}
+                        style={{
+                          backgroundColor: data.primaryColor,
+                          ...(data.logoSizePx ? { width: `${data.logoSizePx}px`, height: `${data.logoSizePx}px`, fontSize: `${Math.round(data.logoSizePx * 0.45)}px` } : {}),
+                        }}
                       >
-                        {data.schoolName ? data.schoolName.charAt(0) : 'ت'}
+                        <span style={{ display: 'inline-block', transform: `translate(${data.logoTextOffsetX || 0}px, ${data.logoTextOffsetY || 0}px)` }}>
+                          {data.schoolName ? data.schoolName.charAt(0) : 'ت'}
+                        </span>
                       </div>
                     )}
                   </div>
@@ -2643,156 +2780,182 @@ export const CertificateCanvas: React.FC<Props> = ({
 
                 {/* Date & Issue Location */}
                 <DraggableItem elementKey="dateLocation">
-                  <div className={`text-left text-xs text-slate-600 space-y-1 w-auto max-w-none overflow-visible ${getElementFontClass('dateLocation')}`} style={getElementCssStyle('dateLocation')}>
-                    {(data.showHeaderDate ?? true) && (() => {
-                      const mode = data.dateFormatMode || 'both';
-                      const hijriStr = data.issueDateHijri || getTodayHijriDate();
-                      const gregStr = data.issueDateGregorian || data.issueDate || getTodayGregorianDate();
-                      const isStacked = data.dateDisplayLayout === 'stacked';
+                  {(() => {
+                    const dateLocationCss = getElementCssStyle('dateLocation');
+                    const dateTextAlign = dateLocationCss.textAlign || 'left';
+                    const dateAlignFlex =
+                      dateTextAlign === 'center'
+                        ? 'justify-center text-center'
+                        : dateTextAlign === 'right'
+                        ? 'justify-start text-right'
+                        : 'justify-end text-left';
+                    const containerAlignClass =
+                      dateTextAlign === 'center'
+                        ? 'text-center items-center'
+                        : dateTextAlign === 'right'
+                        ? 'text-right items-end'
+                        : 'text-left items-start';
 
-                      if (mode === 'hijri') {
-                        return (
-                          <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
-                            <span className="shrink-0 font-bold text-slate-600">{data.dateLabel || 'التاريخ'}:</span>
-                            <InlineEdit
-                              value={data.issueDateHijri || hijriStr}
-                              onChange={(val) => {
-                                handleFieldChange('issueDateHijri', val);
-                                handleFieldChange('issueDate', val);
-                              }}
-                              placeholder="التاريخ الهجري"
-                              className="font-bold text-slate-800 tracking-normal"
-                              style={{ fontVariantNumeric: 'tabular-nums' }}
-                            />
-                          </div>
-                        );
-                      }
+                    return (
+                      <div className={`flex flex-col text-xs text-slate-600 space-y-1 w-auto min-w-[200px] max-w-[340px] sm:max-w-md overflow-visible ${containerAlignClass} ${getElementFontClass('dateLocation')}`} style={dateLocationCss}>
+                        {(data.showHeaderDate ?? true) && (() => {
+                          const mode = data.dateFormatMode || 'both';
+                          const hijriStr = data.issueDateHijri || getTodayHijriDate();
+                          const gregStr = data.issueDateGregorian || data.issueDate || getTodayGregorianDate();
+                          const isStacked = data.dateDisplayLayout === 'stacked';
 
-                      if (mode === 'gregorian') {
-                        return (
-                          <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
-                            <span className="shrink-0 font-bold text-slate-600">{data.dateLabel || 'التاريخ'}:</span>
-                            <InlineEdit
-                              value={data.issueDateGregorian || data.issueDate || gregStr}
-                              onChange={(val) => {
-                                handleFieldChange('issueDateGregorian', val);
-                                handleFieldChange('issueDate', val);
-                              }}
-                              placeholder="التاريخ الميلادي"
-                              className="font-bold text-slate-800 tracking-normal"
-                              style={{ fontVariantNumeric: 'tabular-nums' }}
-                            />
-                          </div>
-                        );
-                      }
+                          if (mode === 'hijri') {
+                            return (
+                              <div className={`flex items-center ${dateAlignFlex} gap-1.5 max-w-full min-w-0 whitespace-nowrap`}>
+                                <span className="shrink-0 font-bold text-slate-600">{data.dateLabel || 'التاريخ'}:</span>
+                                <InlineEdit
+                                  value={data.issueDateHijri || hijriStr}
+                                  onChange={(val) => {
+                                    handleFieldChange('issueDateHijri', val);
+                                    handleFieldChange('issueDate', val);
+                                  }}
+                                  placeholder="التاريخ الهجري"
+                                  className="font-bold text-slate-800 tracking-normal"
+                                  style={{ fontVariantNumeric: 'tabular-nums' }}
+                                />
+                              </div>
+                            );
+                          }
 
-                      // Mode 'both'
-                      if (isStacked) {
-                        return (
-                          <div className="space-y-0.5 text-right">
-                            <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
-                              <span className="shrink-0 text-slate-500 font-bold">الهجري:</span>
+                          if (mode === 'gregorian') {
+                            return (
+                              <div className={`flex items-center ${dateAlignFlex} gap-1.5 max-w-full min-w-0 whitespace-nowrap`}>
+                                <span className="shrink-0 font-bold text-slate-600">{data.dateLabel || 'التاريخ'}:</span>
+                                <InlineEdit
+                                  value={data.issueDateGregorian || data.issueDate || gregStr}
+                                  onChange={(val) => {
+                                    handleFieldChange('issueDateGregorian', val);
+                                    handleFieldChange('issueDate', val);
+                                  }}
+                                  placeholder="التاريخ الميلادي"
+                                  className="font-bold text-slate-800 tracking-normal"
+                                  style={{ fontVariantNumeric: 'tabular-nums' }}
+                                />
+                              </div>
+                            );
+                          }
+
+                          // Mode 'both'
+                          if (isStacked) {
+                            return (
+                              <div className={`space-y-0.5 w-full ${containerAlignClass}`}>
+                                <div className={`flex items-center ${dateAlignFlex} gap-1.5 max-w-full min-w-0 whitespace-nowrap`}>
+                                  <span className="shrink-0 text-slate-500 font-bold">الهجري:</span>
+                                  <InlineEdit
+                                    value={hijriStr}
+                                    onChange={(val) => handleFieldChange('issueDateHijri', val)}
+                                    placeholder="التاريخ الهجري"
+                                    className="font-bold text-slate-800"
+                                    style={{ fontVariantNumeric: 'tabular-nums' }}
+                                  />
+                                </div>
+                                <div className={`flex items-center ${dateAlignFlex} gap-1.5 max-w-full min-w-0 whitespace-nowrap`}>
+                                  <span className="shrink-0 text-slate-500 font-bold">الميلادي:</span>
+                                  <InlineEdit
+                                    value={gregStr}
+                                    onChange={(val) => handleFieldChange('issueDateGregorian', val)}
+                                    placeholder="التاريخ الميلادي"
+                                    className="font-bold text-slate-800"
+                                    style={{ fontVariantNumeric: 'tabular-nums' }}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          }
+
+                          // Single line mode (both)
+                          const combinedDefault = `${hijriStr} - ${gregStr}`;
+                          const combinedValue = (data.issueDateHijri && data.issueDateGregorian) 
+                            ? `${data.issueDateHijri} - ${data.issueDateGregorian}` 
+                            : (data.issueDate || combinedDefault);
+
+                          return (
+                            <div className={`flex items-center ${dateAlignFlex} gap-1.5 max-w-full min-w-0 whitespace-nowrap`}>
+                              <span className="shrink-0 font-bold text-slate-600">{data.dateLabel || 'التاريخ'}:</span>
                               <InlineEdit
-                                value={hijriStr}
-                                onChange={(val) => handleFieldChange('issueDateHijri', val)}
-                                placeholder="التاريخ الهجري"
-                                className="font-bold text-slate-800"
+                                value={combinedValue}
+                                onChange={(val) => handleFieldChange('issueDate', val)}
+                                placeholder="التاريخ الهجري والميلادي"
+                                className="font-bold text-slate-800 tracking-normal"
                                 style={{ fontVariantNumeric: 'tabular-nums' }}
                               />
                             </div>
-                            <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
-                              <span className="shrink-0 text-slate-500 font-bold">الميلادي:</span>
-                              <InlineEdit
-                                value={gregStr}
-                                onChange={(val) => handleFieldChange('issueDateGregorian', val)}
-                                placeholder="التاريخ الميلادي"
-                                className="font-bold text-slate-800"
-                                style={{ fontVariantNumeric: 'tabular-nums' }}
-                              />
-                            </div>
+                          );
+                        })()}
+                        {(data.showHeaderPlace ?? true) && (
+                          <div className={`flex items-center ${dateAlignFlex} gap-1 max-w-full min-w-0`}>
+                            <span className="shrink-0 font-medium text-slate-600">{data.placeLabel || 'المكان'}:</span>
+                            <InlineEdit
+                              value={data.issuePlace}
+                              onChange={(val) => handleFieldChange('issuePlace', val)}
+                              placeholder="المكان"
+                              className="font-medium text-slate-800 max-w-full break-words whitespace-pre-wrap"
+                            />
                           </div>
-                        );
-                      }
-
-                      // Single line mode (both)
-                      const combinedDefault = `${hijriStr} - ${gregStr}`;
-                      const combinedValue = (data.issueDateHijri && data.issueDateGregorian) 
-                        ? `${data.issueDateHijri} - ${data.issueDateGregorian}` 
-                        : (data.issueDate || combinedDefault);
-
-                      return (
-                        <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
-                          <span className="shrink-0 font-bold text-slate-600">{data.dateLabel || 'التاريخ'}:</span>
-                          <InlineEdit
-                            value={combinedValue}
-                            onChange={(val) => handleFieldChange('issueDate', val)}
-                            placeholder="التاريخ الهجري والميلادي"
-                            className="font-bold text-slate-800 tracking-normal"
-                            style={{ fontVariantNumeric: 'tabular-nums' }}
-                          />
-                        </div>
-                      );
-                    })()}
-                    {(data.showHeaderPlace ?? true) && (
-                      <div className="flex items-center justify-end gap-1 max-w-full">
-                        <span className="shrink-0">{data.placeLabel || 'المكان'}:</span>
-                        <InlineEdit
-                          value={data.issuePlace}
-                          onChange={(val) => handleFieldChange('issuePlace', val)}
-                          placeholder="المكان"
-                          className="font-medium text-slate-800 max-w-full break-words whitespace-pre-wrap"
-                        />
+                        )}
+                        {data.showHeaderCertNumber && (
+                          <div className={`flex items-center ${dateAlignFlex} gap-1 max-w-full min-w-0`}>
+                            <span className="shrink-0 font-medium text-slate-600">{data.certNumberLabel || 'الرقم'}:</span>
+                            <InlineEdit
+                              value={data.certNumber || data.verificationCode || data.certificateId || 'REF-1447/0892'}
+                              onChange={(val) => handleFieldChange('certNumber', val)}
+                              placeholder="رقم القيد / المرجع"
+                              className="font-medium text-slate-800 tracking-wide max-w-full break-words whitespace-pre-wrap"
+                            />
+                          </div>
+                        )}
+                        {data.showHeaderLeftExtra1 && (
+                          <div className={`flex items-center ${dateAlignFlex} gap-1 max-w-full min-w-0`}>
+                            <InlineEdit
+                              value={data.headerLeftExtra1 ?? 'نوع الشهادة: معتمدة'}
+                              onChange={(val) => handleFieldChange('headerLeftExtra1', val)}
+                              placeholder="سطر إضافي يسار 1"
+                              className="font-medium text-slate-700 max-w-full break-words whitespace-pre-wrap"
+                            />
+                          </div>
+                        )}
+                        {data.showHeaderLeftExtra2 && (
+                          <div className={`flex items-center ${dateAlignFlex} gap-1 max-w-full`}>
+                            <InlineEdit
+                              value={data.headerLeftExtra2 ?? 'الكود: AC-2026'}
+                              onChange={(val) => handleFieldChange('headerLeftExtra2', val)}
+                              placeholder="سطر إضافي يسار 2"
+                              className="font-medium text-slate-700 max-w-full break-words whitespace-pre-wrap"
+                            />
+                          </div>
+                        )}
+                        {data.showQrCode && (data.showVerificationBadge ?? true) && (
+                          <div
+                            onClick={onOpenVerificationModal}
+                            role="button"
+                            className={`text-[9.5px] text-emerald-700 font-bold flex items-center ${dateAlignFlex} gap-1 hover:underline cursor-pointer pt-0.5 max-w-full leading-none`}
+                          >
+                            <ShieldCheck className="w-3 h-3 text-emerald-600 shrink-0 me-1 inline-block" />
+                            <InlineEdit
+                              value={data.verificationBadgeText ?? 'شهادة موثقة رقمياً'}
+                              onChange={(val) => handleFieldChange('verificationBadgeText', val)}
+                              placeholder="عبارة التوثيق"
+                              className="max-w-full break-words whitespace-pre-wrap leading-none"
+                            />
+                          </div>
+                        )}
                       </div>
-                    )}
-                    {data.showHeaderCertNumber && (
-                      <div className="flex items-center justify-end gap-1 max-w-full">
-                        <span className="shrink-0">{data.certNumberLabel || 'الرقم'}:</span>
-                        <InlineEdit
-                          value={data.certNumber ?? 'REF-1447/0892'}
-                          onChange={(val) => handleFieldChange('certNumber', val)}
-                          placeholder="رقم القيد / المرجع"
-                          className="font-medium text-slate-800 tracking-wide max-w-full break-words whitespace-pre-wrap"
-                        />
-                      </div>
-                    )}
-                    {data.showHeaderLeftExtra1 && (
-                      <div className="flex items-center justify-end gap-1 max-w-full">
-                        <InlineEdit
-                          value={data.headerLeftExtra1 ?? 'نوع الشهادة: معتمدة'}
-                          onChange={(val) => handleFieldChange('headerLeftExtra1', val)}
-                          placeholder="سطر إضافي يسار 1"
-                          className="font-medium text-slate-700 max-w-full break-words whitespace-pre-wrap"
-                        />
-                      </div>
-                    )}
-                    {data.showHeaderLeftExtra2 && (
-                      <div className="flex items-center justify-end gap-1 max-w-full">
-                        <InlineEdit
-                          value={data.headerLeftExtra2 ?? 'الكود: AC-2026'}
-                          onChange={(val) => handleFieldChange('headerLeftExtra2', val)}
-                          placeholder="سطر إضافي يسار 2"
-                          className="font-medium text-slate-700 max-w-full break-words whitespace-pre-wrap"
-                        />
-                      </div>
-                    )}
-                    {data.showQrCode && (data.showVerificationBadge ?? true) && (
-                      <button
-                        onClick={onOpenVerificationModal}
-                        className="text-[9px] text-emerald-700 font-bold flex items-center justify-end gap-1 hover:underline cursor-pointer pt-0.5 max-w-full"
-                      >
-                        <ShieldCheck className="w-3 h-3 text-emerald-600 shrink-0" />
-                        <InlineEdit
-                          value={data.verificationBadgeText ?? 'شهادة موثقة رقمياً'}
-                          onChange={(val) => handleFieldChange('verificationBadgeText', val)}
-                          placeholder="عبارة التوثيق"
-                          className="max-w-full break-words whitespace-pre-wrap"
-                        />
-                      </button>
-                    )}
-                  </div>
+                    );
+                  })()}
                 </DraggableItem>
 
               </div>
+
+              {/* Header Separator / Divider Line */}
+              <div
+                className="w-full h-[1.5px] my-1.5 shrink-0 border-none transition-all duration-300"
+                style={{ backgroundColor: `${data.primaryColor || '#1e293b'}35` }}
+              />
 
               {/* Certificate Title & Subtitle */}
               <DraggableItem elementKey="titleBlock" className="my-1.5 transition-all duration-300 max-w-full overflow-visible">
@@ -2838,11 +3001,21 @@ export const CertificateCanvas: React.FC<Props> = ({
 
               {/* Student Name & Grade Block */}
               <DraggableItem elementKey="recipientBlock" className="my-2 mx-auto w-full max-w-xl transition-all duration-300 overflow-visible">
-                <div className={`py-2 px-6 sm:px-8 rounded-2xl relative group transition-all duration-300 max-w-full overflow-visible ${
-                  data.showRecipientBox !== false
-                    ? 'bg-amber-500/10 border border-amber-500/20 shadow-xs'
-                    : 'bg-transparent border border-transparent'
-                }`}>
+                <div
+                  className={`py-2.5 px-6 sm:px-8 rounded-2xl relative group transition-all duration-300 max-w-full overflow-visible ${
+                    data.showRecipientBox !== false
+                      ? 'shadow-xs border'
+                      : 'bg-transparent border border-transparent'
+                  }`}
+                  style={
+                    data.showRecipientBox !== false
+                      ? {
+                          backgroundColor: hexToRgba(data.recipientBoxColor || '#f59e0b', data.recipientBoxOpacity ?? 0.12),
+                          borderColor: data.recipientBoxBorderColor || hexToRgba(data.recipientBoxColor || '#f59e0b', Math.min(1, (data.recipientBoxOpacity ?? 0.12) * 2 + 0.15)),
+                        }
+                      : undefined
+                  }
+                >
                   <h2 className="text-2xl sm:text-3xl font-extrabold drop-shadow-xs leading-snug max-w-full overflow-visible break-words">
                     <InlineEdit
                       value={data.studentName}
@@ -2852,7 +3025,12 @@ export const CertificateCanvas: React.FC<Props> = ({
                       style={getElementCssStyle('studentName', data.primaryColor)}
                     />
                   </h2>
-                  <div className="text-xs sm:text-sm font-bold mt-1 opacity-90 max-w-full overflow-visible break-words whitespace-pre-wrap">
+                  <div
+                    className="text-xs sm:text-sm font-bold opacity-90 max-w-full overflow-visible break-words whitespace-pre-wrap"
+                    style={{
+                      marginTop: `${data.recipientSpacing ?? 4}px`,
+                    }}
+                  >
                     <InlineEdit
                       value={data.grade}
                       onChange={(val) => handleFieldChange('grade', val)}
@@ -2924,18 +3102,22 @@ export const CertificateCanvas: React.FC<Props> = ({
                           {getBadgeIcon(data.badgeIcon)}
                         </div>
                       )}
-                      {data.badgeTitle && (
-                        <span
-                          className="text-[10px] font-bold mt-1 px-3 py-0.5 rounded-full shadow-xs text-white max-w-[220px] overflow-visible block text-center break-words whitespace-pre-wrap"
-                          style={{ backgroundColor: data.primaryColor }}
+                      {(data.showBadgeTitle ?? true) && data.badgeTitle && (
+                        <div
+                          className="text-[10px] font-bold mt-1 px-3.5 py-1 rounded-full shadow-xs text-white max-w-[220px] overflow-visible inline-flex items-center justify-center text-center break-words whitespace-pre-wrap shrink-0 box-border transition-transform"
+                          style={{
+                            backgroundColor: data.primaryColor,
+                            minWidth: 'max-content',
+                            transform: `translate(${data.badgeTitleOffsetX || 0}px, ${data.badgeTitleOffsetY || 0}px)`
+                          }}
                         >
                           <InlineEdit
                             value={data.badgeTitle}
                             onChange={(val) => handleFieldChange('badgeTitle', val)}
                             placeholder="عنوان الوسام"
-                            className="text-white font-bold max-w-full break-words whitespace-pre-wrap"
+                            className="text-white font-bold w-full text-center break-words whitespace-pre-wrap"
                           />
-                        </span>
+                        </div>
                       )}
                     </div>
                   </DraggableItem>
@@ -2956,7 +3138,10 @@ export const CertificateCanvas: React.FC<Props> = ({
                             }`}
                           />
                           {data.stamp.title && (
-                            <span className="text-[9px] font-extrabold mt-0.5 text-amber-900 max-w-[180px] break-words whitespace-pre-wrap">
+                            <span
+                              className="text-[9px] font-extrabold mt-0.5 text-amber-900 max-w-[180px] break-words whitespace-pre-wrap block text-center transition-transform"
+                              style={{ transform: `translate(${data.stamp.textOffsetX || 0}px, ${data.stamp.textOffsetY || 0}px)` }}
+                            >
                               {data.stamp.title}
                             </span>
                           )}
@@ -2985,7 +3170,10 @@ export const CertificateCanvas: React.FC<Props> = ({
                             color: (data.stamp.shape === 'wax' || data.stamp.shape === 'ribbon') ? undefined : (data.stamp.color || '#b45309')
                           }}
                         >
-                          <div className="w-full px-1 max-w-full overflow-visible flex flex-col justify-center items-center my-auto min-h-full text-center">
+                          <div
+                            className="w-full px-1 max-w-full overflow-visible flex flex-col justify-center items-center my-auto min-h-full text-center transition-transform"
+                            style={{ transform: `translate(${data.stamp.textOffsetX || 0}px, ${data.stamp.textOffsetY || 0}px)` }}
+                          >
                             <InlineEdit
                               value={data.stamp.title}
                               onChange={(val) => updateStampField('title', val)}
@@ -3005,43 +3193,237 @@ export const CertificateCanvas: React.FC<Props> = ({
                   </DraggableItem>
                 )}
 
-                {/* Right: Verification Unique Barcode & QR Code */}
-                {data.showQrCode && (
-                  <DraggableItem elementKey="qrCode">
-                    <div
-                      onClick={onOpenVerificationModal}
-                      className="flex flex-col items-center bg-white/95 p-1.5 border border-slate-300 rounded-xl shadow-sm hover:border-amber-500 transition cursor-pointer group/qr hover:scale-105 shrink-0"
-                      title="انقر للتحقق الرقمي من صحة هذه الشهادة عبر المنصة"
-                    >
-                      <div className="flex items-center gap-1.5">
-                        {qrDataUrl ? (
-                          <img src={qrDataUrl} alt="Verification QR" className="w-10 h-10 bg-white p-0.5 rounded border shadow-2xs" />
-                        ) : (
-                          <div className="w-10 h-10 bg-slate-100 rounded border flex items-center justify-center text-slate-400">
-                            <QrCode className="w-5 h-5" />
-                          </div>
-                        )}
-                        
-                        {/* High Quality Barcode Lines & Serial Code */}
-                        <div className="flex flex-col items-center justify-center space-y-0.5">
-                          <div className="flex items-center gap-0.5 h-4.5 px-1 bg-white border border-slate-300 rounded shadow-2xs">
-                            {[2, 1, 3, 1, 2, 4, 1, 2, 3, 1, 2, 1, 3, 2].map((w, i) => (
-                              <div key={i} className="bg-slate-900 h-full" style={{ width: `${w * 1.1}px` }} />
-                            ))}
-                          </div>
-                          <span className="text-[8px] font-mono font-black text-slate-900 tracking-wider">
-                            {verificationCode}
-                          </span>
-                        </div>
-                      </div>
+                {/* Right: Verification Box & QR Code */}
+                {((data.showVerificationBox ?? true) && (data.showQrCode ?? true)) && (() => {
+                  const showQr = data.showVerificationQr ?? true;
+                  const showBarcode = data.showVerificationBarcode ?? true;
+                  const showSerial = data.showVerificationSerialCode ?? true;
+                  const showStatusText = data.showVerificationStatusText ?? true;
+                  const showIcon = data.showVerificationIcon ?? true;
+                  const statusPhrase = data.verificationBadgeText || (isDriveUploaded ? 'موثق على Google Drive 🟢' : 'توثيق معتمد');
+                  const pattern = data.verificationBoxPattern || 'classic';
+                  const customBg = data.verificationBoxBgColor;
+                  const customText = data.verificationBoxTextColor;
+                  const customBorder = data.verificationBoxBorderColor;
+                  const opacity = data.verificationBoxBgOpacity;
+                  const boxSize = data.verificationBoxSize || 'md';
 
-                      <div className="text-[8px] text-emerald-700 font-bold flex items-center gap-1 mt-0.5 group-hover/qr:underline">
-                        <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
-                        توثيق معتمد
-                      </div>
+                  const qrCodeElement = showQr ? (
+                    <div className="relative shrink-0" title={isDriveUploaded ? "رمز QR يوجه مباشرة إلى رابط الشهادة" : "رمز QR للتحقق الرقمي"}>
+                      {qrDataUrl ? (
+                        <img
+                          src={qrDataUrl}
+                          alt="Verification QR"
+                          className={`bg-white p-0.5 rounded-lg border border-slate-300 shadow-2xs block shrink-0 ${
+                            boxSize === 'sm' ? 'w-8 h-8' : boxSize === 'lg' ? 'w-12 h-12' : 'w-10 h-10'
+                          }`}
+                        />
+                      ) : (
+                        <div className={`bg-slate-100 rounded-lg border flex items-center justify-center text-slate-400 shrink-0 ${
+                          boxSize === 'sm' ? 'w-8 h-8' : boxSize === 'lg' ? 'w-12 h-12' : 'w-10 h-10'
+                        }`}>
+                          <QrCode className={boxSize === 'sm' ? 'w-4 h-4' : boxSize === 'lg' ? 'w-6 h-6' : 'w-5 h-5'} />
+                        </div>
+                      )}
                     </div>
-                  </DraggableItem>
-                )}
+                  ) : null;
+
+                  const barcodeElement = (showBarcode || showSerial) ? (
+                    <div className="flex flex-col items-center justify-center shrink-0 min-w-[90px]">
+                      {showBarcode && (
+                        <div
+                          className="bg-white px-1.5 py-0.5 border border-slate-300 rounded flex items-center justify-center shadow-2xs overflow-hidden"
+                          title={`باركود شريطي يحتوي على الكود: ${verificationCode}`}
+                        >
+                          {(() => {
+                            const { bars, totalWidth } = generateCode39Bars(verificationCode);
+                            return (
+                              <svg viewBox={`0 0 ${totalWidth} 22`} className={`${boxSize === 'sm' ? 'h-3.5' : boxSize === 'lg' ? 'h-5.5' : 'h-4.5'} w-auto max-w-[120px] select-none block`}>
+                                {bars.map((bar, idx) => (
+                                  <rect key={idx} x={bar.x} y="0" width={bar.width} height="22" fill="#0f172a" />
+                                ))}
+                              </svg>
+                            );
+                          })()}
+                        </div>
+                      )}
+                      {showSerial && (
+                        <span
+                          className={`font-mono font-black tracking-wider whitespace-nowrap block text-center mt-0.5 ${
+                            boxSize === 'sm' ? 'text-[7.5px]' : boxSize === 'lg' ? 'text-[9.5px]' : 'text-[8.5px]'
+                          }`}
+                          style={{ color: customText || '#0f172a' }}
+                        >
+                          {verificationCode}
+                        </span>
+                      )}
+                    </div>
+                  ) : null;
+
+                  const statusElement = (showStatusText || showIcon) ? (
+                    <div
+                      className={`font-bold flex items-center justify-center shrink-0 whitespace-nowrap leading-none text-center group-hover/qr:underline ${
+                        boxSize === 'sm' ? 'text-[8.5px] mt-1' : boxSize === 'lg' ? 'text-[10.5px] mt-2' : 'text-[9.5px] mt-1.5'
+                      }`}
+                      style={{ color: customText || '#047857' }}
+                    >
+                      {showIcon && <CheckCircle2 className={`shrink-0 me-1 inline-block ${boxSize === 'sm' ? 'w-2.5 h-2.5' : boxSize === 'lg' ? 'w-3.5 h-3.5' : 'w-3 h-3'}`} style={{ color: customText ? customText : '#059669' }} />}
+                      {showStatusText && <span className="shrink-0 whitespace-nowrap leading-none">{statusPhrase}</span>}
+                    </div>
+                  ) : null;
+
+                  const vOffsetX = data.verificationTextOffsetX || 0;
+                  const vOffsetY = data.verificationTextOffsetY || 0;
+                  const vTransformStyle = (vOffsetX || vOffsetY) ? { transform: `translate(${vOffsetX}px, ${vOffsetY}px)` } : {};
+
+                  return (
+                    <DraggableItem elementKey="qrCode">
+                      {pattern === 'modern-card' ? (
+                        <div
+                          onClick={onOpenVerificationModal}
+                          className="flex flex-col items-center justify-center border rounded-2xl shadow-xs hover:border-amber-500 transition cursor-pointer group/qr hover:scale-105 shrink-0 w-auto min-w-[180px] max-w-full box-border overflow-hidden"
+                          style={{
+                            backgroundColor: customBg || '#f8fafc',
+                            borderColor: customBorder || data.primaryColor || '#cbd5e1',
+                            opacity: opacity ?? 1,
+                            boxSizing: 'border-box',
+                            ...vTransformStyle
+                          }}
+                        >
+                          {(showStatusText || showIcon) && (
+                            <div
+                              className="w-full px-3 py-1 flex items-center justify-center gap-1 text-[9.5px] font-bold text-white shadow-2xs"
+                              style={{ backgroundColor: data.primaryColor || '#0f172a' }}
+                            >
+                              {showIcon && <ShieldCheck className="w-3 h-3 text-amber-300" />}
+                              {showStatusText && <span>{statusPhrase}</span>}
+                            </div>
+                          )}
+                          <div className="p-2.5 flex items-center justify-center gap-2.5 w-full">
+                            {qrCodeElement}
+                            {barcodeElement}
+                          </div>
+                        </div>
+                      ) : pattern === 'seal-stamp' ? (
+                        <div
+                          onClick={onOpenVerificationModal}
+                          className="flex flex-col items-center justify-center p-2.5 border-2 border-dashed rounded-2xl shadow-xs hover:border-amber-500 transition cursor-pointer group/qr hover:scale-105 shrink-0 w-auto min-w-[170px] max-w-full box-border overflow-hidden"
+                          style={{
+                            backgroundColor: customBg || '#fff8f0',
+                            borderColor: customBorder || data.secondaryColor || '#d97706',
+                            opacity: opacity ?? 1,
+                            boxSizing: 'border-box',
+                            ...vTransformStyle
+                          }}
+                        >
+                          {(showStatusText || showIcon) && (
+                            <div className="w-full border-b pb-1 mb-1.5 border-amber-200/80 text-center flex items-center justify-center gap-1">
+                              {showIcon && <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />}
+                              {showStatusText && <span className="text-[9px] font-extrabold text-amber-900 tracking-tight">{statusPhrase}</span>}
+                            </div>
+                          )}
+                          <div className="flex items-center justify-center gap-2">
+                            {qrCodeElement}
+                            {barcodeElement}
+                          </div>
+                        </div>
+                      ) : pattern === 'barcode-focus' ? (
+                        <div
+                          onClick={onOpenVerificationModal}
+                          className="flex flex-col items-center justify-center p-2 border-2 rounded-xl shadow-xs hover:border-amber-500 transition cursor-pointer group/qr hover:scale-105 shrink-0 w-auto min-w-[195px] max-w-full box-border overflow-hidden"
+                          style={{
+                            backgroundColor: customBg || '#ffffff',
+                            borderColor: customBorder || '#1e293b',
+                            opacity: opacity ?? 1,
+                            boxSizing: 'border-box',
+                            ...vTransformStyle
+                          }}
+                        >
+                          <div className="flex items-center justify-between w-full gap-2 border-b border-slate-200 pb-1 mb-1">
+                            {statusElement}
+                            {qrCodeElement}
+                          </div>
+                          <div className="w-full flex justify-center pt-0.5">
+                            {barcodeElement}
+                          </div>
+                        </div>
+                      ) : pattern === 'minimal-pill' ? (
+                        <div
+                          onClick={onOpenVerificationModal}
+                          className="flex items-center justify-center gap-2.5 px-3.5 py-1.5 border rounded-full shadow-xs hover:border-amber-500 transition cursor-pointer group/qr hover:scale-105 shrink-0 w-auto max-w-full box-border overflow-hidden"
+                          style={{
+                            backgroundColor: customBg || '#f1f5f9',
+                            borderColor: customBorder || '#cbd5e1',
+                            opacity: opacity ?? 1,
+                            boxSizing: 'border-box',
+                            ...vTransformStyle
+                          }}
+                        >
+                          {qrCodeElement}
+                          {barcodeElement}
+                          {statusElement}
+                        </div>
+                      ) : pattern === 'glass-card' ? (
+                        <div
+                          onClick={onOpenVerificationModal}
+                          className="flex flex-col items-center justify-center px-3.5 py-2.5 border border-white/60 bg-white/70 backdrop-blur-md rounded-2xl shadow-md hover:border-amber-400 transition cursor-pointer group/qr hover:scale-105 shrink-0 w-auto min-w-[180px] max-w-full box-border overflow-hidden"
+                          style={{
+                            backgroundColor: customBg || 'rgba(255, 255, 255, 0.8)',
+                            borderColor: customBorder || 'rgba(255, 255, 255, 0.9)',
+                            opacity: opacity ?? 1,
+                            boxSizing: 'border-box',
+                            ...vTransformStyle
+                          }}
+                        >
+                          <div className="flex items-center justify-center gap-2.5 w-full">
+                            {qrCodeElement}
+                            {barcodeElement}
+                          </div>
+                          {statusElement}
+                        </div>
+                      ) : pattern === 'certificate-tag' ? (
+                        <div
+                          onClick={onOpenVerificationModal}
+                          className="relative flex flex-col items-center justify-center px-3.5 pt-3 pb-2 border-2 rounded-b-xl rounded-t-sm shadow-xs hover:border-amber-500 transition cursor-pointer group/qr hover:scale-105 shrink-0 w-auto min-w-[170px] max-w-full box-border overflow-hidden"
+                          style={{
+                            backgroundColor: customBg || '#fafafa',
+                            borderColor: customBorder || data.primaryColor || '#334155',
+                            opacity: opacity ?? 1,
+                            boxSizing: 'border-box',
+                            ...vTransformStyle
+                          }}
+                        >
+                          <div className="absolute top-1 left-1/2 -translate-x-1/2 w-2 h-2 rounded-full bg-slate-300 border border-slate-400 shadow-inner" />
+                          <div className="flex items-center justify-center gap-2 mt-1">
+                            {qrCodeElement}
+                            {barcodeElement}
+                          </div>
+                          {statusElement}
+                        </div>
+                      ) : (
+                        /* Default 'classic' pattern */
+                        <div
+                          onClick={onOpenVerificationModal}
+                          className="flex flex-col items-center justify-center px-3.5 py-2.5 border rounded-xl shadow-xs hover:border-amber-500 transition cursor-pointer group/qr hover:scale-105 shrink-0 w-auto min-w-[175px] max-w-full box-border overflow-hidden"
+                          style={{
+                            backgroundColor: customBg || 'rgba(255, 255, 255, 0.95)',
+                            borderColor: customBorder || 'rgba(203, 213, 225, 0.9)',
+                            color: customText || '#0f172a',
+                            opacity: opacity ?? 1,
+                            boxSizing: 'border-box',
+                            ...vTransformStyle
+                          }}
+                        >
+                          <div className="flex items-center justify-center gap-2 w-full my-auto">
+                            {qrCodeElement}
+                            {barcodeElement}
+                          </div>
+                          {statusElement}
+                        </div>
+                      )}
+                    </DraggableItem>
+                  );
+                })()}
 
               </div>
 

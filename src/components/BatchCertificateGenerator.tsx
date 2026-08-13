@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { CertificateData } from '../types';
 import { TEMPLATE_PRESETS } from '../data/templates';
 import { applyDefaultsToCertificate, getSavedDefaultSettings, getFormattedTodayDate } from '../utils/defaultSettings';
+import { generateVerificationCode } from '../utils/qrUtils';
+import { adaptCertificateGender, detectGenderFromName } from '../utils/genderConverter';
 import { CertificateCanvas } from './CertificateCanvas';
 import { Users, Sparkles, Download, CheckCircle, FileSpreadsheet, Trash2, Calendar, Building2 } from 'lucide-react';
 
@@ -36,17 +38,21 @@ export const BatchCertificateGenerator: React.FC<Props> = ({
     const templateDefaults = preset ? preset.defaultData : {};
 
     const newList: CertificateData[] = names.map((name, idx) => {
-      const rawCert: CertificateData = {
+      const detectedGender = detectGenderFromName(name);
+      const vCode = generateVerificationCode();
+      let rawCert: CertificateData = {
         ...baseCertificate,
         ...templateDefaults,
-        id: `batch-${Date.now()}-${idx}`,
+        id: `batch-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 5)}`,
         studentName: name,
         grade,
         subject,
-        verificationCode: `TAQDEER-${new Date().getFullYear()}-B${Math.floor(1000 + Math.random() * 9000)}`,
-        qrCodeData: `https://taqdeer.app/cert/batch-${Date.now()}-${idx + 100}`,
+        verificationCode: vCode,
+        qrCodeData: '',
         updatedAt: new Date().toISOString()
       };
+
+      rawCert = adaptCertificateGender(rawCert, detectedGender, { preserveCustomStudentName: true });
 
       // Merge saved school/principal/teacher default settings & auto today date
       return applyDefaultsToCertificate(rawCert, savedDefaults);

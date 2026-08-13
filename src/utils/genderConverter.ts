@@ -234,12 +234,7 @@ export function adaptCertificateGender(
   newGender: RecipientGender,
   options?: { preserveCustomStudentName?: boolean }
 ): CertificateData {
-  const currentGender = data.recipientGender || 'male';
-  if (currentGender === newGender && options?.preserveCustomStudentName) {
-    return data;
-  }
-
-  // Sample student names
+  // Sample student names used in templates
   const maleSampleNames = ['محمد بن عبد الله آل سعود', 'عبد الله بن خالد الشهري', 'أحمد بن محمد العتيبي'];
   const femaleSampleNames = ['سارة بنت أحمد الغامدي', 'منى بنت يوسف الغامدي', 'نورة بنت خالد الدوسري'];
 

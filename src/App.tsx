@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { CertificateData } from './types';
 import { TEMPLATE_PRESETS } from './data/templates';
 import { applyDefaultsToCertificate, getSavedDefaultSettings, getFormattedTodayDate } from './utils/defaultSettings';
+import { generateVerificationCode } from './utils/qrUtils';
 import { Navbar } from './components/Navbar';
 import { CertificateCanvas } from './components/CertificateCanvas';
 import { EditorToolbar } from './components/EditorToolbar';
@@ -15,7 +16,7 @@ import { VerificationModal } from './components/VerificationModal';
 import { GoogleDriveSaveModal } from './components/GoogleDriveSaveModal';
 import { PrintPreviewModal } from './components/PrintPreviewModal';
 import { DirectShareModal } from './components/DirectShareModal';
-import { sanitizeOklchInDoc } from './utils/exportUtils';
+import { sanitizeOklchInDoc, waitForImagesToLoad, findCertificateCanvasElement } from './utils/exportUtils';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import {
@@ -82,10 +83,12 @@ const RAW_INITIAL_CERTIFICATE_DATA: CertificateData = {
   textColor: '#1e293b',
   fontFamily: 'Amiri',
   fontSizeScale: 1.0,
+  headerFontFamily: 'Cairo',
+  headerFontSizeScale: 1.0,
   aspectRatio: 'A4-landscape',
   showQrCode: true,
-  verificationCode: 'TAQDEER-2026-X89F2A',
-  qrCodeData: 'https://taqdeer.app/verify/TAQDEER-2026-X89F2A',
+  verificationCode: generateVerificationCode(),
+  qrCodeData: '',
   watermarkType: 'text',
   watermarkText: 'مدرسة التميز النموذجية',
   watermarkImageUrl: '',
@@ -93,7 +96,7 @@ const RAW_INITIAL_CERTIFICATE_DATA: CertificateData = {
   watermarkOpacity: 0.05,
   watermarkPattern: 'center',
   watermarkSize: 100,
-  isSavedCloud: true,
+  isSavedCloud: false,
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
   stamp: {
@@ -236,6 +239,15 @@ export default function App() {
 
   const canvasRef = useRef<HTMLDivElement>(null);
 
+  // Automatically switch to editor tab when opening modals that capture/export certificate canvas
+  useEffect(() => {
+    if (isDriveModalOpen || isShareModalOpen || isPrintModalOpen) {
+      if (activeTab !== 'editor') {
+        setActiveTab('editor');
+      }
+    }
+  }, [isDriveModalOpen, isShareModalOpen, isPrintModalOpen, activeTab]);
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3000);
@@ -254,10 +266,9 @@ export default function App() {
       // Wait for React re-render so scale transform & UI controls are removed
       await new Promise((resolve) => setTimeout(resolve, 250));
 
-      const element = canvasRef.current || document.getElementById('certificate-print-area');
-      if (!element) {
-        throw new Error('تعذر العثور على عنصر الشهادة للتصدير');
-      }
+      const element = await findCertificateCanvasElement(canvasRef, 12, 100);
+
+      await waitForImagesToLoad(element as HTMLElement);
 
       const canvas = await html2canvas(element, {
         scale: 2.5, // High DPI (300 DPI equivalent)
@@ -328,10 +339,9 @@ export default function App() {
       // Wait for React re-render so scale transform & UI controls are removed
       await new Promise((resolve) => setTimeout(resolve, 250));
 
-      const element = canvasRef.current || document.getElementById('certificate-print-area');
-      if (!element) {
-        throw new Error('تعذر العثور على عنصر الشهادة للتصدير');
-      }
+      const element = await findCertificateCanvasElement(canvasRef, 12, 100);
+
+      await waitForImagesToLoad(element as HTMLElement);
 
       const canvas = await html2canvas(element, {
         scale: 3, // Ultra-HD 3x Resolution
@@ -403,7 +413,7 @@ export default function App() {
         updatedAt: new Date().toISOString()
       };
 
-      const index = saved.findIndex(c => c.id === updatedCert.id);
+      const index = saved.findIndex(c => c.id === updatedCert.id || (c.verificationCode && c.verificationCode === updatedCert.verificationCode));
       let updatedList: CertificateData[];
       if (index >= 0) {
         updatedList = [...saved];
@@ -433,15 +443,20 @@ export default function App() {
         }
       }
       const newId = `cloud-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-      const newVerificationCode = `TQ-${Math.floor(100000 + Math.random() * 900000)}`;
+      const newVerificationCode = generateVerificationCode();
 
       const certToSave: CertificateData = {
         ...certificateData,
         id: newId,
-        verificationCode: certificateData.verificationCode || newVerificationCode,
+        verificationCode: newVerificationCode,
         isSavedCloud: true,
         createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
+        driveFileId: undefined,
+        driveFileWebViewLink: undefined,
+        driveFileUrl: undefined,
+        driveUploadedAt: undefined,
+        qrCodeData: `${window.location.origin}/verify?code=${newVerificationCode}`
       };
 
       const updatedList = [certToSave, ...saved];
@@ -481,7 +496,7 @@ export default function App() {
       />
 
       {/* Main Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <main className="flex-1 max-w-[1550px] w-full mx-auto px-3 sm:px-6 lg:px-8 py-5 sm:py-6">
         
         {/* TAB 1: MAIN CERTIFICATE EDITOR */}
         {activeTab === 'editor' && (
@@ -529,10 +544,10 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 w-full sm:w-auto overflow-x-auto no-scrollbar shrink-0 py-0.5">
+              <div className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto shrink-0 py-0.5">
                 <button
                   onClick={() => setIsAiModalOpen(true)}
-                  className="px-2.5 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 font-extrabold text-xs rounded-xl shadow-2xs hover:brightness-105 transition flex items-center justify-center gap-1 text-center truncate"
+                  className="px-2.5 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 font-extrabold text-xs rounded-xl shadow-2xs hover:brightness-105 transition flex items-center justify-center gap-1 text-center truncate cursor-pointer"
                   title="صياغة العبارات بالذكاء الاصطناعي"
                 >
                   <Sparkles className="w-3.5 h-3.5 shrink-0" />
@@ -541,7 +556,7 @@ export default function App() {
 
                 <button
                   onClick={handlePrint}
-                  className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow-2xs transition flex items-center justify-center gap-1 text-center truncate"
+                  className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow-2xs transition flex items-center justify-center gap-1 text-center truncate cursor-pointer"
                   title="معاينة للطباعة المباشرة"
                 >
                   <Printer className="w-3.5 h-3.5 shrink-0" />
@@ -581,7 +596,7 @@ export default function App() {
 
                 <button
                   onClick={handleExportPDF}
-                  className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-2xs transition flex items-center justify-center gap-1 text-center truncate"
+                  className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-2xs transition flex items-center justify-center gap-1 text-center truncate cursor-pointer"
                   title="تصدير الشهادة صيغة PDF"
                 >
                   <Download className="w-3.5 h-3.5 shrink-0" />
@@ -607,10 +622,10 @@ export default function App() {
             </div>
 
             {/* Split Screen Layout: Canvas Left/Top, Toolbar Right/Bottom */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start relative">
               
-              {/* Certificate Canvas Area (7 Cols) */}
-              <div className="lg:col-span-7 bg-slate-200/60 p-3 sm:p-4 rounded-2xl border border-slate-300 shadow-inner flex flex-col items-center justify-center min-h-[450px] w-full overflow-hidden">
+              {/* Certificate Canvas Area (7 Cols) - Sticky on Desktop View */}
+              <div className="lg:col-span-7 xl:col-span-7 2xl:col-span-7 lg:sticky lg:top-20 z-10 bg-slate-200/60 p-3 sm:p-4 rounded-2xl border border-slate-300 shadow-inner flex flex-col items-center justify-center min-h-[480px] w-full overflow-hidden transition-all">
                 <CertificateCanvas
                   data={certificateData}
                   canvasRef={canvasRef}
@@ -625,7 +640,7 @@ export default function App() {
               </div>
 
               {/* Certificate Controls Toolbar (5 Cols) */}
-              <div className="lg:col-span-5">
+              <div className="lg:col-span-5 xl:col-span-5 2xl:col-span-5">
                 <EditorToolbar
                   certificateData={certificateData}
                   onChange={updateCertificateData}
@@ -677,6 +692,7 @@ export default function App() {
             }}
             onOpenGoogleDriveModal={(cert) => {
               updateCertificateData(cert);
+              setActiveTab('editor');
               setIsDriveModalOpen(true);
             }}
             onVerifyCertificate={(cert) => {
@@ -727,6 +743,7 @@ export default function App() {
         onUpdateCertificateData={updateCertificateData}
         canvasRef={canvasRef}
         onSetExporting={setIsExporting}
+        onSaveCloudWithoutDrive={handleSaveNewToCloud}
       />
 
       {/* Direct Share Modal (WhatsApp & Direct Email) */}
@@ -737,6 +754,7 @@ export default function App() {
         certificateData={certificateData}
         canvasRef={canvasRef}
         onShowToast={showToast}
+        onSetExporting={setIsExporting}
       />
 
       {/* Print Preview & Page Settings Modal */}

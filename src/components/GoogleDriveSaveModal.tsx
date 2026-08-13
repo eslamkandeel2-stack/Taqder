@@ -8,6 +8,7 @@ import {
   getAccessToken,
   clearAccessToken
 } from '../services/googleDriveService';
+import { generateVerificationCode } from '../utils/qrUtils';
 import { User } from 'firebase/auth';
 import {
   Cloud,
@@ -16,15 +17,16 @@ import {
   ExternalLink,
   Copy,
   Check,
-  QrCode,
-  Sparkles,
   AlertCircle,
   Loader2,
+  HardDrive,
+  Database,
+  ArrowRight,
   ShieldCheck,
-  FileText
+  Sparkles
 } from 'lucide-react';
 import html2canvas from 'html2canvas';
-import { sanitizeOklchInDoc } from '../utils/exportUtils';
+import { sanitizeOklchInDoc, waitForImagesToLoad, findCertificateCanvasElement } from '../utils/exportUtils';
 
 interface Props {
   isOpen: boolean;
@@ -33,6 +35,7 @@ interface Props {
   onUpdateCertificateData: (updated: Partial<CertificateData>) => void;
   canvasRef?: React.RefObject<HTMLDivElement | null>;
   onSetExporting?: (exporting: boolean) => void;
+  onSaveCloudWithoutDrive?: () => void;
 }
 
 export const GoogleDriveSaveModal: React.FC<Props> = ({
@@ -41,13 +44,17 @@ export const GoogleDriveSaveModal: React.FC<Props> = ({
   certificateData,
   onUpdateCertificateData,
   canvasRef,
-  onSetExporting
+  onSetExporting,
+  onSaveCloudWithoutDrive
 }) => {
+  const [saveMode, setSaveMode] = useState<'cloud-only' | 'google-drive'>('cloud-only');
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isSavingCloudOnly, setIsSavingCloudOnly] = useState(false);
   const [uploadSuccess, setUploadSuccess] = useState(false);
+  const [cloudOnlySuccess, setCloudOnlySuccess] = useState(false);
   const [driveUrl, setDriveUrl] = useState<string>(certificateData.driveFileWebViewLink || '');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -55,8 +62,16 @@ export const GoogleDriveSaveModal: React.FC<Props> = ({
   useEffect(() => {
     if (isOpen) {
       setErrorMsg(null);
+      setCloudOnlySuccess(false);
       setUploadSuccess(!!certificateData.driveFileWebViewLink);
       setDriveUrl(certificateData.driveFileWebViewLink || '');
+
+      // Default mode: if already uploaded to Drive, open drive tab, else start on cloud-only tab
+      if (certificateData.driveFileWebViewLink) {
+        setSaveMode('google-drive');
+      } else {
+        setSaveMode('cloud-only');
+      }
 
       const unsubscribe = initDriveAuth(
         (u, tok) => {
@@ -74,6 +89,61 @@ export const GoogleDriveSaveModal: React.FC<Props> = ({
 
   if (!isOpen) return null;
 
+  const handleSaveCloudOnly = () => {
+    try {
+      setIsSavingCloudOnly(true);
+      setErrorMsg(null);
+
+      const certId = certificateData.id && certificateData.id.startsWith('cloud-')
+        ? certificateData.id
+        : `cloud-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+
+      const vCode = certificateData.verificationCode || generateVerificationCode();
+
+      const updatedFields: Partial<CertificateData> = {
+        id: certId,
+        verificationCode: vCode,
+        isSavedCloud: true,
+        updatedAt: new Date().toISOString(),
+        qrCodeData: `${window.location.origin}/verify?code=${vCode}`
+      };
+
+      if (!certificateData.driveFileWebViewLink) {
+        updatedFields.driveFileId = undefined;
+        updatedFields.driveFileWebViewLink = undefined;
+        updatedFields.driveFileUrl = undefined;
+        updatedFields.driveUploadedAt = undefined;
+      }
+
+      const fullUpdatedCert: CertificateData = {
+        ...certificateData,
+        ...updatedFields
+      };
+
+      onUpdateCertificateData(updatedFields);
+
+      // Save into local storage cloud library list
+      const local = localStorage.getItem('taqdeer_saved_certs');
+      let saved: CertificateData[] = [];
+      if (local) {
+        try { saved = JSON.parse(local); } catch (e) { console.error(e); }
+      }
+      const filtered = saved.filter(c => c.id !== fullUpdatedCert.id && c.verificationCode !== fullUpdatedCert.verificationCode);
+      localStorage.setItem('taqdeer_saved_certs', JSON.stringify([fullUpdatedCert, ...filtered]));
+
+      if (onSaveCloudWithoutDrive) {
+        onSaveCloudWithoutDrive();
+      }
+
+      setCloudOnlySuccess(true);
+    } catch (err: any) {
+      console.error('Save cloud only error:', err);
+      setErrorMsg('حدث خطأ أثناء حفظ الشهادة بالسحابة.');
+    } finally {
+      setIsSavingCloudOnly(false);
+    }
+  };
+
   const handleLogin = async () => {
     setIsLoggingIn(true);
     setErrorMsg(null);
@@ -82,8 +152,14 @@ export const GoogleDriveSaveModal: React.FC<Props> = ({
       setUser(res.user);
       setToken(res.accessToken);
     } catch (err: any) {
-      console.error('Login error:', err);
-      setErrorMsg(err.message || 'حدث خطأ أثناء تسجيل الدخول بـ Google');
+      if (err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request' || err.message?.includes('تم إلغاء')) {
+        setErrorMsg('تم إلغاء نافذة تسجيل الدخول.');
+      } else if (err.code === 'auth/popup-blocked') {
+        setErrorMsg('تعذر فتح نافذة تسجيل الدخول. يرجى السماح بالنوافذ المنبثقة (Popups) من إعدادات المتصفح.');
+      } else {
+        console.error('Login error:', err);
+        setErrorMsg(err.message || 'حدث خطأ أثناء تسجيل الدخول بـ Google');
+      }
     } finally {
       setIsLoggingIn(false);
     }
@@ -109,7 +185,11 @@ export const GoogleDriveSaveModal: React.FC<Props> = ({
         setToken(res.accessToken);
         activeToken = res.accessToken;
       } catch (authErr: any) {
-        setErrorMsg('انتهت صلاحية جلسة Google Drive. يرجى إعادة تسجيل الدخول لمتابعة الرفع.');
+        if (authErr.code === 'auth/popup-closed-by-user' || authErr.code === 'auth/cancelled-popup-request' || authErr.message?.includes('تم إلغاء')) {
+          setErrorMsg('تم إلغاء تسجيل الدخول.');
+        } else {
+          setErrorMsg('انتهت صلاحية جلسة Google Drive. يرجى إعادة تسجيل الدخول لمتابعة الرفع.');
+        }
         setToken(null);
         clearAccessToken();
         setIsLoggingIn(false);
@@ -134,11 +214,10 @@ export const GoogleDriveSaveModal: React.FC<Props> = ({
       // Wait 250ms for React re-render so scale transform, input controls & UI drag handles are cleanly stripped
       await new Promise((resolve) => setTimeout(resolve, 250));
 
-      // Get canvas element
-      let elementToCapture = canvasRef?.current || document.getElementById('certificate-print-area');
-      if (!elementToCapture) {
-        throw new Error('لم نتمكن من تحديد لوحة الشهادة لالتقاط الصورة.');
-      }
+      // Get canvas element with robust fallback search
+      const elementToCapture = await findCertificateCanvasElement(canvasRef, 15, 100);
+
+      await waitForImagesToLoad(elementToCapture as HTMLElement);
 
       // Render canvas to PNG Blob
       const canvas = await html2canvas(elementToCapture as HTMLElement, {
@@ -149,8 +228,10 @@ export const GoogleDriveSaveModal: React.FC<Props> = ({
         logging: false,
         onclone: (clonedDoc) => {
           sanitizeOklchInDoc(clonedDoc);
-          const clonedCert = clonedDoc.getElementById('certificate-print-area');
-          if (clonedCert) {
+          const clonedCert = clonedDoc.getElementById('certificate-print-area') || 
+            clonedDoc.querySelector('[data-certificate-canvas="true"]') ||
+            clonedDoc.querySelector('#certificate-print-area');
+          if (clonedCert && clonedCert instanceof HTMLElement) {
             clonedCert.style.transform = 'none';
             clonedCert.style.margin = '0';
             clonedCert.style.position = 'relative';
@@ -182,15 +263,24 @@ export const GoogleDriveSaveModal: React.FC<Props> = ({
           setToken(null);
           clearAccessToken();
           console.warn('Google Drive token expired. Re-authenticating...');
-          const authRes = await googleSignIn();
-          setUser(authRes.user);
-          setToken(authRes.accessToken);
-          driveRes = await uploadCertificateToDrive(
-            blob,
-            fileName,
-            authRes.accessToken,
-            certificateData.driveFileId
-          );
+          try {
+            const authRes = await googleSignIn();
+            setUser(authRes.user);
+            setToken(authRes.accessToken);
+            driveRes = await uploadCertificateToDrive(
+              blob,
+              fileName,
+              authRes.accessToken,
+              certificateData.driveFileId
+            );
+          } catch (retryAuthErr: any) {
+            if (retryAuthErr.code === 'auth/popup-closed-by-user' || retryAuthErr.code === 'auth/cancelled-popup-request' || retryAuthErr.message?.includes('تم إلغاء')) {
+              setErrorMsg('تم إلغاء عملية تسجيل الدخول مع Google.');
+            } else {
+              setErrorMsg('فشلت إعادة المصادقة مع Google Drive.');
+            }
+            return;
+          }
         } else {
           throw uploadErr;
         }
@@ -208,7 +298,7 @@ export const GoogleDriveSaveModal: React.FC<Props> = ({
         driveFileWebViewLink: driveRes.webViewLink,
         driveFileUrl: driveRes.webContentLink,
         driveUploadedAt: new Date().toISOString(),
-        qrCodeData: driveRes.webViewLink, // QR Code now links directly to Google Drive download/view!
+        qrCodeData: driveRes.webViewLink, // QR Code links directly to Google Drive download/view
       };
 
       const fullUpdatedCert: CertificateData = {
@@ -224,7 +314,7 @@ export const GoogleDriveSaveModal: React.FC<Props> = ({
       if (local) {
         try { saved = JSON.parse(local); } catch (e) { console.error(e); }
       }
-      const filtered = saved.filter(c => c.id !== fullUpdatedCert.id);
+      const filtered = saved.filter(c => c.id !== fullUpdatedCert.id && c.verificationCode !== fullUpdatedCert.verificationCode);
       localStorage.setItem('taqdeer_saved_certs', JSON.stringify([fullUpdatedCert, ...filtered]));
 
       setDriveUrl(driveRes.webViewLink);
@@ -270,80 +360,67 @@ export const GoogleDriveSaveModal: React.FC<Props> = ({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-lg font-black">حفظ الشهادات على Google Drive</h3>
+                <h3 className="text-lg font-black">خيارات الحفظ السحابي</h3>
                 <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2 py-0.5 rounded-full font-bold">
-                  توثيق سحابي مباشر
+                  مكتبة + Google Drive
                 </span>
               </div>
               <p className="text-xs text-slate-300 mt-0.5">
-                ربط التوثيق بالباركود برابط شهادتك الأصلي على حساب Google Drive
+                اختر الحفظ بالسحابة في المكتبة أو الرفع المباشر لـ Google Drive
               </p>
             </div>
           </div>
         </div>
 
+        {/* Mode Selector Tabs */}
+        <div className="px-6 pt-5">
+          <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200 gap-1">
+            <button
+              type="button"
+              onClick={() => { setSaveMode('cloud-only'); setErrorMsg(null); }}
+              className={`flex-1 py-2.5 px-3 rounded-xl font-bold text-xs transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                saveMode === 'cloud-only'
+                  ? 'bg-sky-600 text-white shadow-sm font-extrabold'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+              }`}
+            >
+              <Cloud className="w-4 h-4 shrink-0" />
+              <span>حفظ بالمكتبة (بدون Drive)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setSaveMode('google-drive'); setErrorMsg(null); }}
+              className={`flex-1 py-2.5 px-3 rounded-xl font-bold text-xs transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                saveMode === 'google-drive'
+                  ? 'bg-amber-500 text-slate-950 shadow-sm font-extrabold'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+              }`}
+            >
+              <HardDrive className="w-4 h-4 shrink-0" />
+              <span>رفع على Google Drive</span>
+            </button>
+          </div>
+        </div>
+
         {/* Content Body */}
-        <div className="p-6 space-y-5">
+        <div className="p-6 space-y-4">
 
-          {/* User Account Bar */}
-          {user ? (
-            <div className="bg-emerald-50 border border-emerald-200 p-3.5 rounded-2xl flex items-center justify-between">
-              <div className="flex items-center gap-3 min-w-0">
-                {user.photoURL ? (
-                  <img src={user.photoURL} alt={user.displayName || 'Google Account'} className="w-9 h-9 rounded-full border-2 border-emerald-500 shrink-0" />
-                ) : (
-                  <div className="w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center text-sm shrink-0">
-                    {user.email?.[0].toUpperCase() || 'G'}
-                  </div>
-                )}
-                <div className="min-w-0">
-                  <span className="block text-xs font-bold text-slate-900 truncate">
-                    {user.displayName || user.email}
-                  </span>
-                  <span className="block text-[10px] text-emerald-700 font-medium">
-                    متصل بحساب Google ✅
-                  </span>
-                </div>
-              </div>
-
-              <button
-                onClick={handleSignOut}
-                className="text-[11px] text-slate-500 hover:text-red-600 font-bold underline px-2 py-1 rounded transition cursor-pointer"
-              >
-                تبديل الحساب
-              </button>
+          {/* Certificate Info Card */}
+          <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 text-xs space-y-1.5">
+            <div className="flex justify-between text-slate-600">
+              <span>اسم الشهادة:</span>
+              <strong className="text-slate-900">{certificateData.title}</strong>
             </div>
-          ) : (
-            <div className="bg-slate-50 border border-slate-200 p-4 rounded-2xl text-center space-y-3">
-              <p className="text-xs text-slate-700 font-medium">
-                قم بتسجيل الدخول باستخدام حساب Google لحفظ الشهادة مباشرة في Google Drive وتفعيل رابط التوثيق للباركود.
-              </p>
-
-              {/* Official Google Sign-In Button */}
-              <button
-                onClick={handleLogin}
-                disabled={isLoggingIn}
-                className="w-full py-3 px-4 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded-xl font-bold text-xs shadow-xs transition flex items-center justify-center gap-3 cursor-pointer disabled:opacity-50"
-              >
-                {isLoggingIn ? (
-                  <>
-                    <Loader2 className="w-5 h-5 text-amber-600 animate-spin" />
-                    <span>جاري الاتصال بـ Google...</span>
-                  </>
-                ) : (
-                  <>
-                    <svg className="w-5 h-5" viewBox="0 0 48 48">
-                      <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
-                      <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
-                      <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
-                      <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
-                    </svg>
-                    <span>تسجيل الدخول باستخدام Google</span>
-                  </>
-                )}
-              </button>
+            <div className="flex justify-between text-slate-600">
+              <span>اسم المكرّم:</span>
+              <strong className="text-amber-700">{certificateData.studentName}</strong>
             </div>
-          )}
+            <div className="flex justify-between text-slate-600">
+              <span>كود التوثيق والباركود:</span>
+              <strong className="font-mono text-indigo-700">{certificateData.verificationCode || 'سيتولّد تلقائياً'}</strong>
+            </div>
+          </div>
 
           {/* Error Banner */}
           {errorMsg && (
@@ -352,7 +429,7 @@ export const GoogleDriveSaveModal: React.FC<Props> = ({
                 <AlertCircle className="w-5 h-5 text-red-600 shrink-0" />
                 <span className="font-medium">{errorMsg}</span>
               </div>
-              {(errorMsg.includes('انتهت صلاحية') || errorMsg.includes('401') || !token) && (
+              {saveMode === 'google-drive' && (errorMsg.includes('انتهت صلاحية') || errorMsg.includes('401') || !token) && (
                 <button
                   onClick={handleLogin}
                   disabled={isLoggingIn}
@@ -374,81 +451,194 @@ export const GoogleDriveSaveModal: React.FC<Props> = ({
             </div>
           )}
 
-          {/* Certificate Info Summary */}
-          <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-xs space-y-1.5">
-            <div className="flex justify-between text-slate-600">
-              <span>اسم الشهادة:</span>
-              <strong className="text-slate-900">{certificateData.title}</strong>
-            </div>
-            <div className="flex justify-between text-slate-600">
-              <span>اسم المكرّم:</span>
-              <strong className="text-amber-700">{certificateData.studentName}</strong>
-            </div>
-            <div className="flex justify-between text-slate-600">
-              <span>رقم التوثيق / الباركود:</span>
-              <strong className="font-mono text-indigo-700">{certificateData.verificationCode || 'TAQDEER'}</strong>
-            </div>
-          </div>
+          {/* MODE 1: CLOUD ONLY (Without Drive) */}
+          {saveMode === 'cloud-only' && (
+            <div className="space-y-4">
+              <div className="bg-sky-50 border border-sky-200 p-4 rounded-2xl space-y-2 text-right">
+                <div className="flex items-center gap-2 text-sky-950 font-bold text-xs">
+                  <Database className="w-4 h-4 text-sky-600 shrink-0" />
+                  <span>الحفظ في المكتبة السحابية (التخزين السريع)</span>
+                </div>
+                <p className="text-[11px] text-sky-800 leading-relaxed">
+                  سيتم حفظ كافة بيانات الشهادة والتعديلات في مكتبتك السحابية بالتطبيق للوصول إليها وتعديلها وطباعتها في أي وقت دون الحاجة لربط حساب Google Drive.
+                </p>
+              </div>
 
-          {/* Action Button */}
-          {user && (
-            <button
-              onClick={handleUploadToDrive}
-              disabled={isUploading}
-              className="w-full py-3.5 px-4 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs rounded-xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-            >
-              {isUploading ? (
-                <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>جاري توليد الصورة ورفعها لـ Google Drive...</span>
-                </>
-              ) : uploadSuccess ? (
-                <>
-                  <Cloud className="w-5 h-5" />
-                  <span>إعادة رفع / تحديث الشهادة على Google Drive</span>
-                </>
+              {cloudOnlySuccess ? (
+                <div className="bg-emerald-50 border border-emerald-300 p-4 rounded-2xl space-y-3 text-right">
+                  <div className="flex items-center gap-2 text-emerald-950 font-black text-xs">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                    <span>تم حفظ الشهادة بالسحابة في مكتبتك بنجاح! ☁️✨</span>
+                  </div>
+                  <p className="text-[11px] text-emerald-800">
+                    يمكنك الآن العودة للتصميم أو فتح قسم "المكتبة السحابية" لاستعراض الشهادة. كما يمكنك أيضاً رفعها على Google Drive في أي وقت.
+                  </p>
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setSaveMode('google-drive')}
+                      className="flex-1 py-2 px-3 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black rounded-xl text-center flex items-center justify-center gap-1.5 transition cursor-pointer"
+                    >
+                      <HardDrive className="w-4 h-4" />
+                      <span>الترقية للرفع على Google Drive</span>
+                    </button>
+                  </div>
+                </div>
               ) : (
-                <>
-                  <Cloud className="w-5 h-5" />
-                  <span>حفظ الشهادة وتفعيل رابط الباركود على Google Drive</span>
-                </>
+                <button
+                  type="button"
+                  onClick={handleSaveCloudOnly}
+                  disabled={isSavingCloudOnly}
+                  className="w-full py-3.5 px-4 bg-sky-600 hover:bg-sky-500 text-white font-black text-xs rounded-xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {isSavingCloudOnly ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span>جاري حفظ الشهادة بالسحابة...</span>
+                    </>
+                  ) : certificateData.isSavedCloud ? (
+                    <>
+                      <CheckCircle2 className="w-5 h-5" />
+                      <span>تحديث نسخة الشهادة بالمكتبة السحابية</span>
+                    </>
+                  ) : (
+                    <>
+                      <Cloud className="w-5 h-5" />
+                      <span>حفظ الشهادة بالمكتبة السحابية الآن (بدون Drive)</span>
+                    </>
+                  )}
+                </button>
               )}
-            </button>
+            </div>
           )}
 
-          {/* Upload Success View */}
-          {uploadSuccess && driveUrl && (
-            <div className="bg-emerald-50 border border-emerald-300 p-4 rounded-2xl space-y-3 text-right">
-              <div className="flex items-center gap-2 text-emerald-950 font-black text-xs">
-                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-                <span>تم حفظ الشهادة بنجاح على Google Drive! ☁️🎉</span>
-              </div>
-              <p className="text-[11px] text-emerald-800">
-                أصبح باركود QR الخاص بهذه الشهادة يوجه الآن مباشرة إلى رابط التحقق والتحميل الأصلي على Google Drive.
-              </p>
+          {/* MODE 2: GOOGLE DRIVE (With Drive Upload) */}
+          {saveMode === 'google-drive' && (
+            <div className="space-y-4">
+              {/* User Account Bar */}
+              {user ? (
+                <div className="bg-emerald-50 border border-emerald-200 p-3 rounded-2xl flex items-center justify-between">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    {user.photoURL ? (
+                      <img src={user.photoURL} alt={user.displayName || 'Google Account'} className="w-8 h-8 rounded-full border-2 border-emerald-500 shrink-0" />
+                    ) : (
+                      <div className="w-8 h-8 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center text-xs shrink-0">
+                        {user.email?.[0].toUpperCase() || 'G'}
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <span className="block text-xs font-bold text-slate-900 truncate">
+                        {user.displayName || user.email}
+                      </span>
+                      <span className="block text-[10px] text-emerald-700 font-medium">
+                        متصل بحساب Google ✅
+                      </span>
+                    </div>
+                  </div>
 
-              <div className="bg-white p-2.5 rounded-xl border border-emerald-200 flex items-center justify-between gap-2">
-                <span className="text-[11px] font-mono text-slate-700 truncate dir-ltr">{driveUrl}</span>
+                  <button
+                    type="button"
+                    onClick={handleSignOut}
+                    className="text-[11px] text-slate-500 hover:text-red-600 font-bold underline px-2 py-1 transition cursor-pointer"
+                  >
+                    تبديل
+                  </button>
+                </div>
+              ) : (
+                <div className="bg-amber-50/80 border border-amber-200 p-3.5 rounded-2xl text-center space-y-2.5">
+                  <p className="text-xs text-amber-900 font-medium">
+                    قم بتسجيل الدخول باستخدام حساب Google لرفع صورة الشهادة عالية الدقة إلى Google Drive وتفعيل رابط التوثيق المباشر للباركود.
+                  </p>
+
+                  <button
+                    type="button"
+                    onClick={handleLogin}
+                    disabled={isLoggingIn}
+                    className="w-full py-2.5 px-4 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded-xl font-bold text-xs shadow-xs transition flex items-center justify-center gap-2.5 cursor-pointer disabled:opacity-50"
+                  >
+                    {isLoggingIn ? (
+                      <>
+                        <Loader2 className="w-4 h-4 text-amber-600 animate-spin" />
+                        <span>جاري الاتصال بـ Google...</span>
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4" viewBox="0 0 48 48">
+                          <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
+                          <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
+                          <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
+                          <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
+                        </svg>
+                        <span>تسجيل الدخول باستخدام Google</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
+
+              {/* Action Button */}
+              {user && (
                 <button
-                  onClick={handleCopyLink}
-                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg transition flex items-center gap-1 shrink-0 cursor-pointer"
+                  type="button"
+                  onClick={handleUploadToDrive}
+                  disabled={isUploading}
+                  className="w-full py-3.5 px-4 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs rounded-xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                 >
-                  {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copied ? 'تم النسخ!' : 'نسخ الرابط'}</span>
+                  {isUploading ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span>جاري توليد الصورة ورفعها لـ Google Drive...</span>
+                    </>
+                  ) : uploadSuccess ? (
+                    <>
+                      <HardDrive className="w-5 h-5" />
+                      <span>إعادة رفع / تحديث الشهادة على Google Drive</span>
+                    </>
+                  ) : (
+                    <>
+                      <HardDrive className="w-5 h-5" />
+                      <span>حفظ ورفع الشهادة وتفعيل رابط Google Drive</span>
+                    </>
+                  )}
                 </button>
-              </div>
+              )}
 
-              <div className="flex items-center gap-2 pt-1">
-                <a
-                  href={driveUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex-1 py-2 px-3 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl text-center flex items-center justify-center gap-1.5 transition"
-                >
-                  <ExternalLink className="w-4 h-4 text-amber-400" />
-                  <span>فتح الشهادة في Google Drive</span>
-                </a>
-              </div>
+              {/* Upload Success View */}
+              {uploadSuccess && driveUrl && (
+                <div className="bg-emerald-50 border border-emerald-300 p-4 rounded-2xl space-y-3 text-right">
+                  <div className="flex items-center gap-2 text-emerald-950 font-black text-xs">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                    <span>تم حفظ الشهادة بنجاح على Google Drive! ☁️🎉</span>
+                  </div>
+                  <p className="text-[11px] text-emerald-800">
+                    أصبح باركود QR الخاص بهذه الشهادة يوجه الآن مباشرة إلى رابط التحقق والتحميل الأصلي على Google Drive.
+                  </p>
+
+                  <div className="bg-white p-2.5 rounded-xl border border-emerald-200 flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-mono text-slate-700 truncate dir-ltr">{driveUrl}</span>
+                    <button
+                      type="button"
+                      onClick={handleCopyLink}
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg transition flex items-center gap-1 shrink-0 cursor-pointer"
+                    >
+                      {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copied ? 'تم النسخ!' : 'نسخ الرابط'}</span>
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-1">
+                    <a
+                      href={driveUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex-1 py-2 px-3 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl text-center flex items-center justify-center gap-1.5 transition"
+                    >
+                      <ExternalLink className="w-4 h-4 text-amber-400" />
+                      <span>فتح الشهادة في Google Drive</span>
+                    </a>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -456,8 +646,9 @@ export const GoogleDriveSaveModal: React.FC<Props> = ({
 
         {/* Footer */}
         <div className="bg-slate-50 p-4 border-t border-slate-200 flex justify-between items-center text-xs">
-          <span className="text-slate-500 font-medium">نظام التوثيق المباشر بـ Google Workspace</span>
+          <span className="text-slate-500 font-medium">نظام التوثيق والمكتبة السحابية</span>
           <button
+            type="button"
             onClick={onClose}
             className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl transition cursor-pointer"
           >

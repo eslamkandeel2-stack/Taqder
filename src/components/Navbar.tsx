@@ -137,33 +137,51 @@ export const Navbar: React.FC<Props> = ({
               {lastAutosavedTime && <span className="text-slate-400 font-mono text-[9px]">({lastAutosavedTime})</span>}
             </div>
             {certificateData?.isSavedCloud && onUpdateCloudCertificate ? (
-              <button
-                onClick={onUpdateCloudCertificate}
-                className="flex items-center gap-1 px-2 sm:px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-[11px] sm:text-xs rounded-lg transition shadow-md shrink-0 cursor-pointer animate-pulse"
-                title="حفظ التعديلات الحالية على هذه الشهادة في السحابة"
-              >
-                <CloudCheck className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
-                <span className="hidden lg:inline">حفظ التعديلات</span>
-              </button>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  onClick={onUpdateCloudCertificate}
+                  className="flex items-center gap-1 px-2 sm:px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-[11px] sm:text-xs rounded-lg transition shadow-md shrink-0 cursor-pointer"
+                  title="حفظ التعديلات الحالية على هذه الشهادة في السحابة"
+                >
+                  <CloudCheck className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+                  <span className="hidden lg:inline">حفظ التعديلات بالسحابة</span>
+                </button>
+                {onSaveNewToCloud && (
+                  <button
+                    onClick={onSaveNewToCloud}
+                    className="flex items-center gap-1 px-2 py-1.5 bg-slate-800 hover:bg-slate-700 text-sky-300 font-bold text-[11px] rounded-lg transition shrink-0 cursor-pointer border border-sky-500/30"
+                    title="حفظ هذه الشهادة كشهادة جديدة منفصلة بالسحابة"
+                  >
+                    <Cloud className="w-3.5 h-3.5 shrink-0" />
+                    <span className="hidden xl:inline">+ كشهادة جديدة</span>
+                  </button>
+                )}
+              </div>
             ) : onSaveNewToCloud ? (
               <button
                 onClick={onSaveNewToCloud}
-                className="flex items-center gap-1 px-2 sm:px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white font-extrabold text-[11px] sm:text-xs rounded-lg transition shadow-xs shrink-0 cursor-pointer"
-                title="حفظ الشهادة في السحابة"
+                className="flex items-center gap-1 px-2 sm:px-3.5 py-1.5 bg-sky-600 hover:bg-sky-500 text-white font-extrabold text-[11px] sm:text-xs rounded-lg transition shadow-xs shrink-0 cursor-pointer"
+                title="حفظ هذه الشهادة كشهادة جديدة في السحابة"
               >
                 <Cloud className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
-                <span className="hidden lg:inline">حفظ بالسحابة</span>
+                <span className="hidden lg:inline">حفظ كشهادة جديدة</span>
               </button>
             ) : null}
 
             {onOpenGoogleDriveModal && (
               <button
                 onClick={onOpenGoogleDriveModal}
-                className="flex items-center gap-1 px-2 sm:px-3 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 font-extrabold text-[11px] sm:text-xs rounded-lg hover:brightness-110 transition shadow-xs shrink-0 cursor-pointer"
-                title="حفظ الشهادة ومصادقة الباركود عبر Google Drive"
+                className={`flex items-center gap-1 px-2 sm:px-3 py-1.5 font-extrabold text-[11px] sm:text-xs rounded-lg transition shadow-xs shrink-0 cursor-pointer ${
+                  certificateData?.driveFileWebViewLink
+                    ? 'bg-emerald-600 text-white hover:bg-emerald-500 border border-emerald-400/40'
+                    : 'bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 hover:brightness-110'
+                }`}
+                title={certificateData?.driveFileWebViewLink ? "شهادة موثقة على Google Drive" : "حفظ الشهادة ومصادقة الباركود عبر Google Drive"}
               >
                 <Cloud className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
-                <span className="hidden lg:inline">Google Drive</span>
+                <span className="hidden lg:inline">
+                  {certificateData?.driveFileWebViewLink ? 'موثقة بـ Drive 🟢' : 'Google Drive'}
+                </span>
               </button>
             )}
 
