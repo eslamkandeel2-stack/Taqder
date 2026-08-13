@@ -5,6 +5,7 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
+    base: '/Taqder/', // <-- أضف هذا السطر هنا باسم مستودعك
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
