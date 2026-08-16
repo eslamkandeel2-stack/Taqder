@@ -11,8 +11,11 @@ import {
   Download,
   Share2,
   ShieldCheck,
-  Cloud
+  Cloud,
+  FolderHeart,
+  BookmarkCheck
 } from 'lucide-react';
+import { getSavedDrafts, subscribeToDrafts } from '../utils/draftsManager';
 
 interface Props {
   activeTab: 'editor' | 'batch' | 'dashboard' | 'cloud' | 'ai' | 'settings';
@@ -22,6 +25,7 @@ interface Props {
   onPrint?: () => void;
   onOpenVerificationModal?: () => void;
   onOpenGoogleDriveModal?: () => void;
+  onOpenDraftsModal?: () => void;
   certificateData?: any;
   onUpdateCloudCertificate?: () => void;
   onSaveNewToCloud?: () => void;
@@ -36,11 +40,22 @@ export const Navbar: React.FC<Props> = ({
   onPrint,
   onOpenVerificationModal,
   onOpenGoogleDriveModal,
+  onOpenDraftsModal,
   certificateData,
   onUpdateCloudCertificate,
   onSaveNewToCloud,
   lastAutosavedTime
 }) => {
+  const [draftsCount, setDraftsCount] = React.useState(0);
+
+  React.useEffect(() => {
+    const updateCount = () => {
+      setDraftsCount(getSavedDrafts().length);
+    };
+    updateCount();
+    const unsub = subscribeToDrafts(updateCount);
+    return () => unsub();
+  }, []);
   return (
     <header className="bg-slate-900 text-white sticky top-0 z-50 shadow-lg border-b border-slate-800 overflow-x-clip">
       <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8">
@@ -136,6 +151,21 @@ export const Navbar: React.FC<Props> = ({
               <span>حفظ تلقائي</span>
               {lastAutosavedTime && <span className="text-slate-400 font-mono text-[9px]">({lastAutosavedTime})</span>}
             </div>
+
+            {/* Saved Drafts and Templates Button */}
+            {onOpenDraftsModal && (
+              <button
+                onClick={onOpenDraftsModal}
+                className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 hover:text-amber-200 border border-amber-500/40 text-[11px] sm:text-xs font-black rounded-lg transition shadow-xs shrink-0 cursor-pointer"
+                title="إدارة واسترجاع المسودات والقوالب المحفوظة بالنظام"
+              >
+                <FolderHeart className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400 shrink-0" />
+                <span className="hidden sm:inline">المسودات</span>
+                <span className="bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold">
+                  {draftsCount}
+                </span>
+              </button>
+            )}
             {certificateData?.isSavedCloud && onUpdateCloudCertificate ? (
               <div className="flex items-center gap-1.5 shrink-0">
                 <button

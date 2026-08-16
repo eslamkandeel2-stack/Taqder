@@ -390,6 +390,165 @@ app.post("/api/ai-optimize-margins", async (req, res) => {
   }
 });
 
+// AI Layout Auto-Fit & Dynamic Collision-Free Optimization Endpoint
+app.post("/api/ai-optimize-layout", async (req, res) => {
+  try {
+    const { certData, targetPreset } = req.body;
+    const ai = getGenAI();
+
+    const title = certData?.title || "شهادة شكر وتقدير";
+    const subtitle = certData?.subtitle || "";
+    const studentName = certData?.studentName || "اسم الطالب";
+    const grade = certData?.grade || "";
+    const recipientIntro = certData?.recipientIntro || "تتقدم إدارة المدرسة بوافر الشكر والتقدير للطالب:";
+    const appreciationText = certData?.appreciationText || "";
+    const poemOrQuote = certData?.poemOrQuote || "";
+    const schoolName = certData?.schoolName || "";
+    const headerLine1 = certData?.headerLine1 || "";
+    const headerLine2 = certData?.headerLine2 || "";
+    const headerLine3 = certData?.headerLine3 || "";
+    const signaturesCount = Array.isArray(certData?.signatures) ? certData.signatures.filter((s: any) => s.show !== false).length : 2;
+    const stampsCount = Array.isArray(certData?.stamps) ? certData.stamps.filter((s: any) => s.show !== false).length : 1;
+    const currentPreset = targetPreset || certData?.layoutPreset || "classic-standard";
+    const frameStyle = certData?.frameStyle || "double-gold";
+    const aspectRatio = certData?.aspectRatio || "A4-landscape";
+
+    const promptText = `أنت خبير تصاميم الشهادات الرسمية والطباعة الأكاديمية الراقية والمهندس المعماري لتخطيطات CSS Grid.
+المهمة: تحليل محتوى ونصوص الشهادة الحالية وحساب أبعاد ومقاسات خطوط متناسقة وفخمة جداً (Font Sizes, Line Heights, Margins, Spacings) تضمن 100%:
+1. ملء مساحة الشهادة بالكتابة بشكل متوازن وفخم ومقروء تماماً من مسافة مريحة.
+2. منع تصغير النصوص بشكل مبالغ فيه بتاتاً — يجب أن تظهر الشهادة غنية وممتلئة وواضحة جداً.
+3. إبراز عنوان الشهادة بمقاس كبير وفخم (32 إلى 42px)، وإبراز اسم المكرم/الطالب بوضوح وجلالة (28 إلى 38px)، ونص التكريم بخط واضح ومريح للقراءة (15.5 إلى 20px).
+4. منع خروج أي نص أو عنصر خارج حدود الشهادة وتأمين هوامش حماية متوازنة لمنع اقتراب النصوص من إطار الشهادة.
+5. منع تداخل النصوص مع التواقيع، الأختام، الأوسمة، أو الإطار المحيط.
+6. توسيط العناصر بصرياً وجمالياً وتحقيق أعلى درجات التوازن والراحة البصرية.
+
+بيانات الشهادة للتحليل:
+- أبعاد الشهادة: ${aspectRatio}
+- نمط الإطار: ${frameStyle}
+- نمط التخطيط الحالي: ${currentPreset}
+- العنوان الرئيسي: "${title}" (طول: ${title.length} حرف)
+- العنوان الفرعي: "${subtitle}" (طول: ${subtitle.length} حرف)
+- مقدمة المكرم: "${recipientIntro}" (طول: ${recipientIntro.length} حرف)
+- اسم الطالب: "${studentName}" (طول: ${studentName.length} حرف)
+- الصف/المرحلة: "${grade}"
+- نص التقدير والثناء: "${appreciationText}" (طول: ${appreciationText.length} حرف، عدد الكلمات: ${appreciationText.split(/\s+/).filter(Boolean).length})
+- بيت الشعر / الحكمة: "${poemOrQuote}" (مفعّل: ${certData?.showPoemOrQuote !== false && Boolean(poemOrQuote)})
+- عدد أسطر الترويسة العلوية: ${[headerLine1, headerLine2, headerLine3, schoolName].filter(Boolean).length}
+- عدد التواقيع الفعالة: ${signaturesCount}
+- عدد الأختام والأوسمة: ${stampsCount}
+
+المطلوب إرجاع كائن JSON حصراً بالقيم المحسوبة بدقة بالبكسل:
+1. recommendedLayoutPreset: نمط التخطيط الأنسب من بين:
+   ("classic-standard", "modern-split", "sidebar-right", "sidebar-left", "minimal-centered", "executive-horizontal", "diploma-grand", "custom-grid"). إذا كان النص طويلاً جداً، يُفضل "modern-split" أو "sidebar-right" أو "executive-horizontal" لتوفير مساحة أفقية مريحة.
+2. elementFontSizes:
+   - title: مقاس خط العنوان الرئيسي بالبكسل (32 إلى 42)
+   - subtitle: مقاس خط العنوان الفرعي (15 إلى 19)
+   - recipientIntro: مقاس خط عبارة التقديم (15 إلى 19)
+   - studentName: مقاس خط اسم الطالب (28 إلى 38)
+   - grade: مقاس خط الصف (13 إلى 17)
+   - appreciationText: مقاس خط نص التكريم (15.5 إلى 20)
+   - appreciationLineHeight: تباعد الأسطر لنص التكريم (1.5 إلى 1.75)
+   - poemOrQuote: مقاس خط بيت الشعر (13.5 إلى 18)
+   - schoolHeader: مقاس خط نصوص الترويسة (11.5 إلى 14.5)
+   - schoolName: مقاس خط اسم المدرسة (14 إلى 18)
+   - signatures: مقاس خط أسماء التواقيع (12.5 إلى 15.5)
+3. margins:
+   - canvasMarginTop: الهامش العلوي الآمن بالبكسل (18 إلى 45)
+   - canvasMarginBottom: الهامش السفلي الآمن بالبكسل (18 إلى 45)
+   - canvasMarginLeft: الهامش الأيسر بالبكسل (24 إلى 50)
+   - canvasMarginRight: الهامش الأيمن بالبكسل (24 إلى 50)
+4. spacings:
+   - recipientSpacing: المسافة بين اسم الطالب والصف (3 إلى 8)
+   - logoSizePx: القطر المناسب للشعار بالبكسل (40 إلى 70)
+   - signaturesSpacing: المسافة العمودية للتواقيع (4 إلى 12)
+5. resetOverlappingOffsets: دائماً true لضبط المحاذاة التلقائية وتصحيح أي تداخل يدوي سابق.
+6. customGridConfig: (اختياري، في حال اختيار custom-grid)
+   - gridTemplateAreas: سلسلة التوزيع بتنسيق CSS Grid محكم ومستطيل.
+   - gridTemplateColumns: توزيع الأعمدة (مثال: "1fr 1fr" أو "220px 1fr").
+   - gridTemplateRows: توزيع الصفوف (مثال: "auto auto 1fr auto").
+7. explanation: شرح أنيق باللغة العربية يوضح كيف تمت ملاءمة مقاسات الكتابة وتوزيعها بدقة لتملأ مساحة الشهادة بفخامة ووضوح دون تداخل.
+8. highlights: مصفوفة من 2-4 نقاط سريعة توضح التحسينات (مثال: ["ملاءمة مقاس الخط لملء الشهادة بوضوح وفخامة", "تأمين هوامش حماية متوازنة للإطار", "توسيط اسم الطالب بكتلة محكمة"]).`;
+
+    const response = await generateContentWithRetry(ai, {
+      primaryModel: "gemini-3.7-flash",
+      contents: [promptText],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            recommendedLayoutPreset: { type: Type.STRING },
+            elementFontSizes: {
+              type: Type.OBJECT,
+              properties: {
+                title: { type: Type.NUMBER },
+                subtitle: { type: Type.NUMBER },
+                recipientIntro: { type: Type.NUMBER },
+                studentName: { type: Type.NUMBER },
+                grade: { type: Type.NUMBER },
+                appreciationText: { type: Type.NUMBER },
+                appreciationLineHeight: { type: Type.NUMBER },
+                poemOrQuote: { type: Type.NUMBER },
+                schoolHeader: { type: Type.NUMBER },
+                schoolName: { type: Type.NUMBER },
+                signatures: { type: Type.NUMBER },
+              },
+              required: ["title", "studentName", "appreciationText"],
+            },
+            margins: {
+              type: Type.OBJECT,
+              properties: {
+                canvasMarginTop: { type: Type.NUMBER },
+                canvasMarginBottom: { type: Type.NUMBER },
+                canvasMarginLeft: { type: Type.NUMBER },
+                canvasMarginRight: { type: Type.NUMBER },
+              },
+              required: ["canvasMarginTop", "canvasMarginBottom", "canvasMarginLeft", "canvasMarginRight"],
+            },
+            spacings: {
+              type: Type.OBJECT,
+              properties: {
+                recipientSpacing: { type: Type.NUMBER },
+                logoSizePx: { type: Type.NUMBER },
+                signaturesSpacing: { type: Type.NUMBER },
+              },
+            },
+            resetOverlappingOffsets: { type: Type.BOOLEAN },
+            customGridConfig: {
+              type: Type.OBJECT,
+              properties: {
+                gridTemplateAreas: { type: Type.STRING },
+                gridTemplateColumns: { type: Type.STRING },
+                gridTemplateRows: { type: Type.STRING },
+              },
+            },
+            explanation: { type: Type.STRING },
+            highlights: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+            },
+          },
+          required: ["recommendedLayoutPreset", "elementFontSizes", "margins", "explanation"],
+        },
+      },
+    });
+
+    const jsonText = response.text || "{}";
+    const parsedData = JSON.parse(jsonText);
+
+    res.json({
+      success: true,
+      optimization: parsedData,
+    });
+  } catch (error: any) {
+    console.error("AI Layout Optimization Error:", error);
+    res.status(500).json({
+      success: false,
+      error: formatAiErrorMessage(error),
+    });
+  }
+});
+
 // AI Background Removal Endpoint for Logo Images
 app.post("/api/ai-remove-background", async (req, res) => {
   try {

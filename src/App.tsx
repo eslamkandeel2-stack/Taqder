@@ -16,6 +16,7 @@ import { VerificationModal } from './components/VerificationModal';
 import { GoogleDriveSaveModal } from './components/GoogleDriveSaveModal';
 import { PrintPreviewModal } from './components/PrintPreviewModal';
 import { DirectShareModal } from './components/DirectShareModal';
+import { DraftsManagerModal } from './components/DraftsManagerModal';
 import { sanitizeOklchInDoc, waitForImagesToLoad, findCertificateCanvasElement } from './utils/exportUtils';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
@@ -234,6 +235,7 @@ export default function App() {
   const [isVerificationModalOpen, setIsVerificationModalOpen] = useState(false);
   const [isDriveModalOpen, setIsDriveModalOpen] = useState(false);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+  const [isDraftsModalOpen, setIsDraftsModalOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
 
@@ -489,6 +491,7 @@ export default function App() {
         onPrint={handlePrint}
         onOpenVerificationModal={() => setIsVerificationModalOpen(true)}
         onOpenGoogleDriveModal={() => setIsDriveModalOpen(true)}
+        onOpenDraftsModal={() => setIsDraftsModalOpen(true)}
         certificateData={certificateData}
         onUpdateCloudCertificate={handleUpdateCloudCertificate}
         onSaveNewToCloud={handleSaveNewToCloud}
@@ -653,6 +656,7 @@ export default function App() {
                   onSaveToCloud={handleSaveNewToCloud}
                   onUpdateCloudCertificate={handleUpdateCloudCertificate}
                   onOpenGoogleDriveModal={() => setIsDriveModalOpen(true)}
+                  onOpenDraftsModal={() => setIsDraftsModalOpen(true)}
                   canUndo={canUndo}
                   canRedo={canRedo}
                   onUndo={handleUndo}
@@ -762,6 +766,19 @@ export default function App() {
         isOpen={isPrintModalOpen}
         onClose={() => setIsPrintModalOpen(false)}
         certificateData={certificateData}
+      />
+
+      {/* Drafts & Templates Manager Modal */}
+      <DraftsManagerModal
+        isOpen={isDraftsModalOpen}
+        onClose={() => setIsDraftsModalOpen(false)}
+        currentCertificate={certificateData}
+        onLoadCertificate={(cert) => {
+          updateCertificateData(cert);
+          setActiveTab('editor');
+          showToast('تم استرجاع وتطبيق المسودة/القالب بنجاح! 🚀');
+        }}
+        onShowToast={showToast}
       />
 
     </div>

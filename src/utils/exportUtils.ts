@@ -437,11 +437,15 @@ export function sanitizeOklchInDoc(clonedDoc: Document) {
 
         if (cs.boxSizing) clonedNode.style.boxSizing = cs.boxSizing;
 
-        // Copy computed opacity, zIndex, and transform (DO NOT copy transform to the root container)
+        // Copy computed opacity, zIndex, and transform (faithfully preserve inline transform for badge/stamp/draggables)
         if (cs.opacity) clonedNode.style.opacity = cs.opacity;
         if (cs.zIndex && cs.zIndex !== 'auto') clonedNode.style.zIndex = cs.zIndex;
-        if (origNode !== origContainer && cs.transform && cs.transform !== 'none') {
-          clonedNode.style.transform = cs.transform;
+        if (origNode !== origContainer) {
+          if (origNode.style && origNode.style.transform) {
+            clonedNode.style.transform = origNode.style.transform;
+          } else if (cs.transform && cs.transform !== 'none') {
+            clonedNode.style.transform = cs.transform;
+          }
         }
 
         // Copy typography & alignment (essential for Arabic text formatting, alignment & line breaks)

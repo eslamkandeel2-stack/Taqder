@@ -24,6 +24,21 @@ export interface DefaultCertificateSettings {
   canvasMarginBottom?: number;
   canvasMarginLeft?: number;
   canvasMarginRight?: number;
+  // Verification Box Defaults
+  verificationBoxPattern?: 'classic' | 'modern-card' | 'seal-stamp' | 'barcode-focus' | 'minimal-pill' | 'glass-card' | 'certificate-tag';
+  showVerificationQr?: boolean;
+  showVerificationBarcode?: boolean;
+  showVerificationSerialCode?: boolean;
+  showVerificationStatusText?: boolean;
+  showVerificationIcon?: boolean;
+  verificationBadgeText?: string;
+  verificationPrefix?: string;
+  verificationCodePattern?: 'prefix-year-random' | 'prefix-random' | 'prefix-date-serial' | 'numbers-only' | 'prefix-seq';
+  verificationBoxBgColor?: string;
+  verificationBoxTextColor?: string;
+  verificationBoxBorderColor?: string;
+  verificationBoxBgOpacity?: number;
+  verificationBoxSize?: 'sm' | 'md' | 'lg';
 }
 
 export const FALLBACK_DEFAULT_SETTINGS: DefaultCertificateSettings = {
@@ -50,6 +65,17 @@ export const FALLBACK_DEFAULT_SETTINGS: DefaultCertificateSettings = {
   canvasMarginBottom: 24,
   canvasMarginLeft: 32,
   canvasMarginRight: 32,
+  verificationBoxPattern: 'classic',
+  showVerificationQr: true,
+  showVerificationBarcode: true,
+  showVerificationSerialCode: true,
+  showVerificationStatusText: true,
+  showVerificationIcon: true,
+  verificationBadgeText: 'شهادة موثقة رقمياً',
+  verificationPrefix: 'TAQDEER',
+  verificationCodePattern: 'prefix-year-random',
+  verificationBoxBgOpacity: 1,
+  verificationBoxSize: 'md'
 };
 
 /**
@@ -265,6 +291,20 @@ export function applyDefaultsToCertificate(
     canvasMarginBottom: defaults.canvasMarginBottom ?? cert.canvasMarginBottom ?? 24,
     canvasMarginLeft: defaults.canvasMarginLeft ?? cert.canvasMarginLeft ?? 32,
     canvasMarginRight: defaults.canvasMarginRight ?? cert.canvasMarginRight ?? 32,
+    verificationBoxPattern: defaults.verificationBoxPattern ?? cert.verificationBoxPattern ?? 'classic',
+    showVerificationQr: defaults.showVerificationQr ?? cert.showVerificationQr ?? true,
+    showVerificationBarcode: defaults.showVerificationBarcode ?? cert.showVerificationBarcode ?? true,
+    showVerificationSerialCode: defaults.showVerificationSerialCode ?? cert.showVerificationSerialCode ?? true,
+    showVerificationStatusText: defaults.showVerificationStatusText ?? cert.showVerificationStatusText ?? true,
+    showVerificationIcon: defaults.showVerificationIcon ?? cert.showVerificationIcon ?? true,
+    verificationBadgeText: defaults.verificationBadgeText ?? cert.verificationBadgeText ?? 'شهادة موثقة رقمياً',
+    verificationPrefix: defaults.verificationPrefix ?? cert.verificationPrefix ?? 'TAQDEER',
+    verificationCodePattern: defaults.verificationCodePattern ?? cert.verificationCodePattern ?? 'prefix-year-random',
+    verificationBoxBgColor: defaults.verificationBoxBgColor ?? cert.verificationBoxBgColor,
+    verificationBoxTextColor: defaults.verificationBoxTextColor ?? cert.verificationBoxTextColor,
+    verificationBoxBorderColor: defaults.verificationBoxBorderColor ?? cert.verificationBoxBorderColor,
+    verificationBoxBgOpacity: defaults.verificationBoxBgOpacity ?? cert.verificationBoxBgOpacity ?? 1,
+    verificationBoxSize: defaults.verificationBoxSize ?? cert.verificationBoxSize ?? 'md',
     updatedAt: new Date().toISOString()
   };
 }

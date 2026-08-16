@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { CertificateData, FontOption, AspectRatioOption, FrameStyle, BadgeIconType, SignatureItem, GradientConfig, GradientType, ElementStyles, TextElementStyle } from '../types';
+import { CertificateData, FontOption, AspectRatioOption, FrameStyle, BadgeIconType, SignatureItem, GradientConfig, GradientType, ElementStyles, TextElementStyle, LayoutPreset } from '../types';
 import { TEMPLATE_PRESETS } from '../data/templates';
 import { BACKGROUND_TEXTURES } from '../data/backgrounds';
-import { getFormattedTodayDate, getTodayHijriDate, getTodayGregorianDate, normalizeDateDigits, getSavedDefaultSettings } from '../utils/defaultSettings';
+import { getFormattedTodayDate, getTodayHijriDate, getTodayGregorianDate, normalizeDateDigits, getSavedDefaultSettings, saveDefaultSettingsToStorage } from '../utils/defaultSettings';
 import { GRADIENT_PRESETS, GRADIENT_COLOR_SWATCHES } from '../utils/gradientUtils';
 import { generateVerificationCode, sanitizeVerificationCode } from '../utils/qrUtils';
 import { adaptCertificateGender, RecipientGender } from '../utils/genderConverter';
@@ -18,6 +18,14 @@ import { SignaturePadModal } from './SignaturePadModal';
 import { TemplateGalleryModal } from './TemplateGalleryModal';
 import { LogoCropModal } from './LogoCropModal';
 import { removeWhiteBackgroundCanvas, removeBackgroundAi } from '../utils/imageUtils';
+import { validateGridTemplateAreas, CUSTOM_GRID_SNIPPETS, CERTIFICATE_GRID_AREAS } from '../utils/gridValidator';
+import {
+  optimizeLayoutWithAi,
+  autoFitLayoutLocally,
+  applyOptimizationToCertificateData,
+  detectLayoutPotentialIssues,
+  LayoutOptimizationResult
+} from '../utils/layoutOptimizer';
 import {
   Sparkles,
   Palette,
@@ -69,8 +77,21 @@ import {
   ArrowUp,
   ArrowDown,
   ArrowLeft,
-  ArrowRight
+  ArrowRight,
+  Code,
+  AlertTriangle,
+  Wrench,
+  Wand2,
+  BrainCircuit,
+  FolderHeart
 } from 'lucide-react';
+import {
+  getSavedDrafts,
+  saveCertificateAsDraft,
+  deleteSavedDraft,
+  subscribeToDrafts,
+  DraftCertificateItem
+} from '../utils/draftsManager';
 
 interface Props {
   certificateData: CertificateData;
@@ -84,6 +105,7 @@ interface Props {
   onSaveToCloud?: () => void;
   onUpdateCloudCertificate?: () => void;
   onOpenGoogleDriveModal?: () => void;
+  onOpenDraftsModal?: () => void;
   canUndo?: boolean;
   canRedo?: boolean;
   onUndo?: () => void;
@@ -100,6 +122,7 @@ const OffsetPad: React.FC<{
   onReset: () => void;
   min?: number;
   max?: number;
+  defaultOpen?: boolean;
 }> = ({
   title,
   subtitle,
@@ -109,98 +132,120 @@ const OffsetPad: React.FC<{
   onChangeY,
   onReset,
   min = -100,
-  max = 100
+  max = 100,
+  defaultOpen = false,
 }) => {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
+  const isModified = offsetX !== 0 || offsetY !== 0;
+
   return (
-    <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/90 space-y-2.5">
-      <div className="flex items-center justify-between border-b border-slate-200/70 pb-1.5">
+    <div className="mt-1.5 rounded-xl border border-slate-200/90 overflow-hidden bg-slate-50/70 transition-all shadow-2xs">
+      <div
+        className="flex items-center justify-between px-2.5 py-1.5 bg-slate-100/75 hover:bg-slate-200/70 transition cursor-pointer select-none"
+        onClick={() => setIsOpen(!isOpen)}
+      >
+        <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700 text-right">
+          <Move className={`w-3.5 h-3.5 ${isModified ? 'text-amber-600 font-extrabold' : 'text-slate-500'}`} />
+          <span>تحريك {title}</span>
+          {isModified && (
+            <span className="text-[10px] bg-amber-100 text-amber-900 border border-amber-300/80 px-1.5 py-0.5 rounded-md font-mono dir-ltr font-bold">
+              X:{offsetX > 0 ? `+${offsetX}` : offsetX} Y:{offsetY > 0 ? `+${offsetY}` : offsetY}
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-1.5">
-          <Move className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-          <div>
-            <span className="text-xs font-bold text-slate-800 block">{title}</span>
-            {subtitle && <span className="text-[10px] text-slate-500 block">{subtitle}</span>}
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={onReset}
-          className="px-2 py-0.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-600 rounded text-[10px] font-bold transition flex items-center gap-1 cursor-pointer shrink-0"
-          title="إعادة ضبط الموقع للوضع الافتراضي (0, 0)"
-        >
-          <RotateCcw className="w-3 h-3 text-slate-500" />
-          <span>إعادة ضبط</span>
-        </button>
-      </div>
-
-      <div className="grid grid-cols-2 gap-2 text-xs">
-        <div>
-          <div className="flex justify-between text-[11px] font-bold text-slate-700 mb-0.5">
-            <span>أفقي (يمين/يسار):</span>
-            <span className="font-mono text-amber-700 dir-ltr">{offsetX > 0 ? `+${offsetX}` : offsetX}px</span>
-          </div>
-          <input
-            type="range"
-            min={min}
-            max={max}
-            value={offsetX}
-            onChange={(e) => onChangeX(parseInt(e.target.value) || 0)}
-            className="w-full accent-amber-500 cursor-pointer"
-          />
-        </div>
-
-        <div>
-          <div className="flex justify-between text-[11px] font-bold text-slate-700 mb-0.5">
-            <span>رأسي (أعلى/أسفل):</span>
-            <span className="font-mono text-amber-700 dir-ltr">{offsetY > 0 ? `+${offsetY}` : offsetY}px</span>
-          </div>
-          <input
-            type="range"
-            min={min}
-            max={max}
-            value={offsetY}
-            onChange={(e) => onChangeY(parseInt(e.target.value) || 0)}
-            className="w-full accent-amber-500 cursor-pointer"
-          />
+          {isModified && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onReset();
+              }}
+              className="px-1.5 py-0.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-600 rounded text-[10px] font-bold transition flex items-center gap-0.5 cursor-pointer"
+              title="إعادة ضبط الموضع للصفر"
+            >
+              <RotateCcw className="w-2.5 h-2.5" />
+              <span>إعادة</span>
+            </button>
+          )}
+          <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform duration-200 ${isOpen ? 'rotate-180 text-amber-600' : ''}`} />
         </div>
       </div>
 
-      <div className="flex items-center justify-between bg-white px-2.5 py-1.5 rounded-lg border border-slate-200">
-        <span className="text-[10px] font-bold text-slate-600">تحريك دقيق بالأسهم:</span>
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() => onChangeY(Math.max(min, offsetY - 2))}
-            className="p-1 bg-slate-50 hover:bg-amber-100 border border-slate-200 rounded text-slate-800 transition cursor-pointer"
-            title="تحريك للأعلى"
-          >
-            <ArrowUp className="w-3 h-3 text-slate-700" />
-          </button>
-          <button
-            type="button"
-            onClick={() => onChangeY(Math.min(max, offsetY + 2))}
-            className="p-1 bg-slate-50 hover:bg-amber-100 border border-slate-200 rounded text-slate-800 transition cursor-pointer"
-            title="تحريك للأسفل"
-          >
-            <ArrowDown className="w-3 h-3 text-slate-700" />
-          </button>
-          <button
-            type="button"
-            onClick={() => onChangeX(Math.max(min, offsetX - 2))}
-            className="p-1 bg-slate-50 hover:bg-amber-100 border border-slate-200 rounded text-slate-800 transition cursor-pointer"
-            title="تحريك لليسار"
-          >
-            <ArrowLeft className="w-3 h-3 text-slate-700" />
-          </button>
-          <button
-            type="button"
-            onClick={() => onChangeX(Math.min(max, offsetX + 2))}
-            className="p-1 bg-slate-50 hover:bg-amber-100 border border-slate-200 rounded text-slate-800 transition cursor-pointer"
-            title="تحريك لليمين"
-          >
-            <ArrowRight className="w-3 h-3 text-slate-700" />
-          </button>
+      {isOpen && (
+        <div className="p-2.5 bg-white border-t border-slate-200/70 space-y-2">
+          {subtitle && <p className="text-[10px] text-slate-500">{subtitle}</p>}
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <div>
+              <div className="flex justify-between text-[10px] font-bold text-slate-700 mb-0.5">
+                <span>أفقي (يمين/يسار):</span>
+                <span className="font-mono text-amber-700 dir-ltr">{offsetX > 0 ? `+${offsetX}` : offsetX}px</span>
+              </div>
+              <input
+                type="range"
+                min={min}
+                max={max}
+                value={offsetX}
+                onChange={(e) => onChangeX(parseInt(e.target.value) || 0)}
+                className="w-full accent-amber-500 cursor-pointer h-1.5"
+              />
+            </div>
+
+            <div>
+              <div className="flex justify-between text-[10px] font-bold text-slate-700 mb-0.5">
+                <span>رأسي (أعلى/أسفل):</span>
+                <span className="font-mono text-amber-700 dir-ltr">{offsetY > 0 ? `+${offsetY}` : offsetY}px</span>
+              </div>
+              <input
+                type="range"
+                min={min}
+                max={max}
+                value={offsetY}
+                onChange={(e) => onChangeY(parseInt(e.target.value) || 0)}
+                className="w-full accent-amber-500 cursor-pointer h-1.5"
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between bg-slate-50 px-2 py-1 rounded-lg border border-slate-200/80">
+            <span className="text-[10px] font-bold text-slate-600">تحريك دقيق:</span>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => onChangeY(Math.max(min, offsetY - 2))}
+                className="p-1 bg-white hover:bg-amber-100 border border-slate-200 rounded text-slate-800 transition cursor-pointer"
+                title="تحريك للأعلى"
+              >
+                <ArrowUp className="w-3 h-3 text-slate-700" />
+              </button>
+              <button
+                type="button"
+                onClick={() => onChangeY(Math.min(max, offsetY + 2))}
+                className="p-1 bg-white hover:bg-amber-100 border border-slate-200 rounded text-slate-800 transition cursor-pointer"
+                title="تحريك للأسفل"
+              >
+                <ArrowDown className="w-3 h-3 text-slate-700" />
+              </button>
+              <button
+                type="button"
+                onClick={() => onChangeX(Math.max(min, offsetX - 2))}
+                className="p-1 bg-white hover:bg-amber-100 border border-slate-200 rounded text-slate-800 transition cursor-pointer"
+                title="تحريك لليمين (العربية)"
+              >
+                <ArrowRight className="w-3 h-3 text-slate-700" />
+              </button>
+              <button
+                type="button"
+                onClick={() => onChangeX(Math.min(max, offsetX + 2))}
+                className="p-1 bg-white hover:bg-amber-100 border border-slate-200 rounded text-slate-800 transition cursor-pointer"
+                title="تحريك لليسار"
+              >
+                <ArrowLeft className="w-3 h-3 text-slate-700" />
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };
@@ -380,6 +425,7 @@ export const EditorToolbar: React.FC<Props> = ({
   onSaveToCloud,
   onUpdateCloudCertificate,
   onOpenGoogleDriveModal,
+  onOpenDraftsModal,
   canUndo,
   canRedo,
   onUndo,
@@ -401,6 +447,107 @@ export const EditorToolbar: React.FC<Props> = ({
   const [isLogoCropModalOpen, setIsLogoCropModalOpen] = useState(false);
   const [isAiRemovingLogoBg, setIsAiRemovingLogoBg] = useState(false);
   const [logoActionNotice, setLogoActionNotice] = useState<string | null>(null);
+  
+  // Saved Drafts & Templates State
+  const [isSavedDraftsSectionOpen, setIsSavedDraftsSectionOpen] = useState(true);
+  const [savedDraftsList, setSavedDraftsList] = useState<DraftCertificateItem[]>([]);
+  const [quickDraftName, setQuickDraftName] = useState('');
+  const [draftNotice, setDraftNotice] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    const refreshDrafts = () => {
+      setSavedDraftsList(getSavedDrafts());
+    };
+    refreshDrafts();
+    const unsub = subscribeToDrafts(refreshDrafts);
+    return () => unsub();
+  }, []);
+
+  const handleQuickSaveDraft = (type: 'draft' | 'template' = 'draft') => {
+    const defaultName = type === 'template'
+      ? `قالب: ${certificateData.title || 'تصميم'} (${certificateData.layoutPreset || 'مخصص'})`
+      : `${certificateData.title || 'شهادة'} - ${certificateData.studentName || 'مسودة'}`;
+    const finalName = quickDraftName.trim() || defaultName;
+
+    saveCertificateAsDraft(certificateData, {
+      name: finalName,
+      type
+    });
+
+    setQuickDraftName('');
+    setDraftNotice(type === 'template' ? 'تم حفظ التصميم كقالب مخصص بالنظام بنجاح! ✨' : 'تم حفظ الشهادة كمسودة بالنظام بنجاح! 💾');
+    setTimeout(() => setDraftNotice(null), 4000);
+  };
+
+  // AI Layout Auto-Fit & Dynamic Collision-Free Optimization State
+  const [isAiOptimizingLayout, setIsAiOptimizingLayout] = useState(false);
+  const [aiLayoutResult, setAiLayoutResult] = useState<LayoutOptimizationResult | null>(null);
+  const [aiLayoutNotice, setAiLayoutNotice] = useState<string | null>(null);
+  const [isAiLayoutDetailsOpen, setIsAiLayoutDetailsOpen] = useState(false);
+  const [previousCertDataBeforeLayoutAi, setPreviousCertDataBeforeLayoutAi] = useState<CertificateData | null>(null);
+
+  // Collapsible Accordion States for Templates & Layout Tab
+  const [isGridLayoutSectionOpen, setIsGridLayoutSectionOpen] = useState(true);
+  const [isLayoutPresetsSubOpen, setIsLayoutPresetsSubOpen] = useState(true);
+  const [isAiLayoutOptimizerSubOpen, setIsAiLayoutOptimizerSubOpen] = useState(true);
+  const [isCustomGridEditorSubOpen, setIsCustomGridEditorSubOpen] = useState(certificateData.layoutPreset === 'custom-grid');
+  const [isSafeMarginsSpacingSubOpen, setIsSafeMarginsSpacingSubOpen] = useState(false);
+  const [isPresetTemplatesSectionOpen, setIsPresetTemplatesSectionOpen] = useState(true);
+  const [selectedTemplateCategory, setSelectedTemplateCategory] = useState<string>('الكل');
+
+  const handleOptimizeLayoutAi = async (targetPreset?: LayoutPreset) => {
+    setIsAiOptimizingLayout(true);
+    setPreviousCertDataBeforeLayoutAi(certificateData);
+    setAiLayoutNotice('جاري التحليل الهندسي والملاءمة التلقائية للعناصر بالذكاء الاصطناعي لمنع التداخل والفيضان...');
+    try {
+      const result = await optimizeLayoutWithAi(certificateData, targetPreset);
+      const updatedData = applyOptimizationToCertificateData(certificateData, result);
+      onChange({
+        ...updatedData,
+        updatedAt: new Date().toISOString()
+      });
+      setAiLayoutResult(result);
+      setAiLayoutNotice(result.explanation);
+      setIsAiLayoutDetailsOpen(true);
+    } catch (err) {
+      console.warn('AI Layout error, applying local deterministic auto-fit:', err);
+      const fallback = autoFitLayoutLocally(certificateData, targetPreset);
+      const updatedData = applyOptimizationToCertificateData(certificateData, fallback);
+      onChange({
+        ...updatedData,
+        updatedAt: new Date().toISOString()
+      });
+      setAiLayoutResult(fallback);
+      setAiLayoutNotice(fallback.explanation);
+      setIsAiLayoutDetailsOpen(true);
+    } finally {
+      setIsAiOptimizingLayout(false);
+    }
+  };
+
+  const handleInstantAutoFit = (targetPreset?: LayoutPreset) => {
+    setPreviousCertDataBeforeLayoutAi(certificateData);
+    const result = autoFitLayoutLocally(certificateData, targetPreset);
+    const updatedData = applyOptimizationToCertificateData(certificateData, result);
+    onChange({
+      ...updatedData,
+      updatedAt: new Date().toISOString()
+    });
+    setAiLayoutResult(result);
+    setAiLayoutNotice('تمت الملاءمة الفورية وحساب الخطوط والهوامش ومنع التداخل بنجاح ⚡');
+    setIsAiLayoutDetailsOpen(true);
+  };
+
+  const handleUndoLayoutOptimization = () => {
+    if (previousCertDataBeforeLayoutAi) {
+      onChange(previousCertDataBeforeLayoutAi);
+      setPreviousCertDataBeforeLayoutAi(null);
+      setAiLayoutResult(null);
+      setAiLayoutNotice('تم التراجع عن تحسين التخطيط واستعادة التنسيق السابق.');
+      setIsAiLayoutDetailsOpen(false);
+      setTimeout(() => setAiLayoutNotice(null), 4000);
+    }
+  };
 
   const handleMakeLogoBgTransparent = async () => {
     if (!certificateData.logoUrl) return;
@@ -1004,123 +1151,15 @@ export const EditorToolbar: React.FC<Props> = ({
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden text-right">
       
-      {/* Category Navigation Tabs Header - Desktop Responsive 2-Row Grid & Mobile Scroll Bar */}
-      {/* 1. Desktop & Tablet View (sm and up): Clean 4-Column Grid, No Scrolling Required! */}
-      <div className="hidden sm:grid sm:grid-cols-4 gap-1.5 p-2 bg-slate-100/90 border-b border-slate-200">
-        <button
-          type="button"
-          onClick={() => setActiveTab('content')}
-          className={`py-2 px-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 border cursor-pointer select-none ${
-            activeTab === 'content'
-              ? 'bg-amber-500 text-slate-950 border-amber-500 shadow-xs font-black'
-              : 'bg-white text-slate-700 hover:bg-amber-50 hover:text-amber-800 border-slate-200/80'
-          }`}
-        >
-          <FileText className="w-4 h-4 shrink-0 text-amber-700" />
-          <span className="truncate">1. البيانات</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('formatting')}
-          className={`py-2 px-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 border cursor-pointer select-none ${
-            activeTab === 'formatting'
-              ? 'bg-amber-500 text-slate-950 border-amber-500 shadow-xs font-black'
-              : 'bg-white text-slate-700 hover:bg-amber-50 hover:text-amber-800 border-slate-200/80'
-          }`}
-        >
-          <SlidersHorizontal className="w-4 h-4 shrink-0 text-amber-700" />
-          <span className="truncate">2. تنسيق النصوص</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('templates')}
-          className={`py-2 px-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 border cursor-pointer select-none ${
-            activeTab === 'templates'
-              ? 'bg-amber-500 text-slate-950 border-amber-500 shadow-xs font-black'
-              : 'bg-white text-slate-700 hover:bg-amber-50 hover:text-amber-800 border-slate-200/80'
-          }`}
-        >
-          <Award className="w-4 h-4 shrink-0 text-amber-700" />
-          <span className="truncate">3. القوالب</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('style')}
-          className={`py-2 px-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 border cursor-pointer select-none ${
-            activeTab === 'style'
-              ? 'bg-amber-500 text-slate-950 border-amber-500 shadow-xs font-black'
-              : 'bg-white text-slate-700 hover:bg-amber-50 hover:text-amber-800 border-slate-200/80'
-          }`}
-        >
-          <Palette className="w-4 h-4 shrink-0 text-amber-700" />
-          <span className="truncate">4. الألوان والخطوط</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('signatures')}
-          className={`py-2 px-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 border cursor-pointer select-none ${
-            activeTab === 'signatures'
-              ? 'bg-amber-500 text-slate-950 border-amber-500 shadow-xs font-black'
-              : 'bg-white text-slate-700 hover:bg-amber-50 hover:text-amber-800 border-slate-200/80'
-          }`}
-        >
-          <PenTool className="w-4 h-4 shrink-0 text-amber-700" />
-          <span className="truncate">5. التوقيعات</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('frame')}
-          className={`py-2 px-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 border cursor-pointer select-none ${
-            activeTab === 'frame'
-              ? 'bg-amber-500 text-slate-950 border-amber-500 shadow-xs font-black'
-              : 'bg-white text-slate-700 hover:bg-amber-50 hover:text-amber-800 border-slate-200/80'
-          }`}
-        >
-          <Maximize2 className="w-4 h-4 shrink-0 text-amber-700" />
-          <span className="truncate">6. الإطار والشعار</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('elements')}
-          className={`py-2 px-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 border cursor-pointer select-none ${
-            activeTab === 'elements'
-              ? 'bg-amber-500 text-slate-950 border-amber-500 shadow-xs font-black'
-              : 'bg-white text-slate-700 hover:bg-amber-50 hover:text-amber-800 border-slate-200/80'
-          }`}
-        >
-          <Stamp className="w-4 h-4 shrink-0 text-amber-700" />
-          <span className="truncate">7. الأختام والرموز</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('export')}
-          className={`py-2 px-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 border cursor-pointer select-none ${
-            activeTab === 'export'
-              ? 'bg-amber-500 text-slate-950 border-amber-500 shadow-xs font-black'
-              : 'bg-white text-slate-700 hover:bg-amber-50 hover:text-amber-800 border-slate-200/80'
-          }`}
-        >
-          <Share2 className="w-4 h-4 shrink-0 text-amber-700" />
-          <span className="truncate">8. التصدير والطباعة</span>
-        </button>
-      </div>
-
-      {/* 2. Mobile View (<sm): Interactive Horizontal Drag & Navigation Arrows */}
-      <div className="relative sm:hidden flex items-center bg-slate-50 border-b border-slate-200 py-1">
+      {/* Category Navigation Tabs Header - Interactive Scrollable Bar & Responsive Navigation */}
+      <div className="relative flex items-center bg-slate-100/90 border-b border-slate-200 py-1.5 px-1">
         <button
           type="button"
           onClick={() => scrollNavTabs('right')}
-          className="absolute right-0 z-10 h-full px-1.5 bg-gradient-to-l from-slate-200 via-slate-100 to-transparent text-slate-700 hover:text-amber-700 flex items-center justify-center cursor-pointer shadow-2xs"
+          className="absolute right-0 z-20 h-full px-2 bg-gradient-to-l from-slate-200 via-slate-100/90 to-transparent text-slate-700 hover:text-amber-700 flex items-center justify-center cursor-pointer shadow-xs rounded-r-2xl"
           title="تمرير الأزرار لليمين"
         >
-          <ChevronRight className="w-4 h-4" />
+          <ChevronRight className="w-4 h-4 stroke-[2.5]" />
         </button>
 
         <div
@@ -1129,124 +1168,46 @@ export const EditorToolbar: React.FC<Props> = ({
           onMouseLeave={handleMouseLeaveOrUpTabs}
           onMouseUp={handleMouseLeaveOrUpTabs}
           onMouseMove={handleMouseMoveTabs}
-          className="flex items-center gap-1 overflow-x-auto no-scrollbar touch-pan-x scroll-smooth w-full px-7 py-0.5 select-none cursor-grab active:cursor-grabbing"
+          className="flex items-center gap-1.5 overflow-x-auto no-scrollbar touch-pan-x scroll-smooth w-full px-8 py-0.5 select-none cursor-grab active:cursor-grabbing"
         >
-          <button
-            onClick={() => setActiveTab('content')}
-            className={`py-2 px-3 text-xs font-bold border-b-2 flex items-center gap-1.5 transition shrink-0 whitespace-nowrap ${
-              activeTab === 'content'
-                ? 'border-amber-500 text-amber-600 bg-white rounded-t-lg shadow-2xs font-extrabold'
-                : 'border-transparent text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <FileText className="w-3.5 h-3.5 shrink-0" />
-            <span>البيانات</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('formatting')}
-            className={`py-2 px-3 text-xs font-bold border-b-2 flex items-center gap-1.5 transition shrink-0 whitespace-nowrap ${
-              activeTab === 'formatting'
-                ? 'border-amber-500 text-amber-600 bg-white rounded-t-lg shadow-2xs font-extrabold'
-                : 'border-transparent text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <SlidersHorizontal className="w-3.5 h-3.5 shrink-0" />
-            <span>تنسيق النصوص</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('templates')}
-            className={`py-2 px-3 text-xs font-bold border-b-2 flex items-center gap-1.5 transition shrink-0 whitespace-nowrap ${
-              activeTab === 'templates'
-                ? 'border-amber-500 text-amber-600 bg-white rounded-t-lg shadow-2xs font-extrabold'
-                : 'border-transparent text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Award className="w-3.5 h-3.5 shrink-0" />
-            <span>القوالب</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('style')}
-            className={`py-2 px-3 text-xs font-bold border-b-2 flex items-center gap-1.5 transition shrink-0 whitespace-nowrap ${
-              activeTab === 'style'
-                ? 'border-amber-500 text-amber-600 bg-white rounded-t-lg shadow-2xs font-extrabold'
-                : 'border-transparent text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Palette className="w-3.5 h-3.5 shrink-0" />
-            <span>الألوان والخطوط</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('signatures')}
-            className={`py-2 px-3 text-xs font-bold border-b-2 flex items-center gap-1.5 transition shrink-0 whitespace-nowrap ${
-              activeTab === 'signatures'
-                ? 'border-amber-500 text-amber-600 bg-white rounded-t-lg shadow-2xs font-extrabold'
-                : 'border-transparent text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <PenTool className="w-3.5 h-3.5 shrink-0" />
-            <span>التوقيعات</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('frame')}
-            className={`py-2 px-3 text-xs font-bold border-b-2 flex items-center gap-1.5 transition shrink-0 whitespace-nowrap ${
-              activeTab === 'frame'
-                ? 'border-amber-500 text-amber-600 bg-white rounded-t-lg shadow-2xs font-extrabold'
-                : 'border-transparent text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Maximize2 className="w-3.5 h-3.5 shrink-0" />
-            <span>الإطار والشعار</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('elements')}
-            className={`py-2 px-3 text-xs font-bold border-b-2 flex items-center gap-1.5 transition shrink-0 whitespace-nowrap ${
-              activeTab === 'elements'
-                ? 'border-amber-500 text-amber-600 bg-white rounded-t-lg shadow-2xs font-extrabold'
-                : 'border-transparent text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Stamp className="w-3.5 h-3.5 shrink-0" />
-            <span>الأختام والرموز</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('verification')}
-            className={`py-2 px-3 text-xs font-bold border-b-2 flex items-center gap-1.5 transition shrink-0 whitespace-nowrap ${
-              activeTab === 'verification'
-                ? 'border-amber-500 text-amber-600 bg-white rounded-t-lg shadow-2xs font-extrabold'
-                : 'border-transparent text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
-            <span>مربع التوثيق</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('export')}
-            className={`py-2 px-3 text-xs font-bold border-b-2 flex items-center gap-1.5 transition shrink-0 whitespace-nowrap ${
-              activeTab === 'export'
-                ? 'border-amber-500 text-amber-600 bg-white rounded-t-lg shadow-2xs font-extrabold'
-                : 'border-transparent text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Share2 className="w-3.5 h-3.5 shrink-0" />
-            <span>التصدير</span>
-          </button>
+          {[
+            { id: 'content', label: '1. البيانات', icon: FileText },
+            { id: 'formatting', label: '2. تنسيق النصوص', icon: SlidersHorizontal },
+            { id: 'templates', label: '3. القوالب والتخطيط', icon: Award },
+            { id: 'style', label: '4. الألوان والخطوط', icon: Palette },
+            { id: 'signatures', label: '5. التوقيعات', icon: PenTool },
+            { id: 'frame', label: '6. الإطار والشعار', icon: Maximize2 },
+            { id: 'elements', label: '7. الأختام والرموز', icon: Stamp },
+            { id: 'verification', label: '8. مربع التوثيق', icon: ShieldCheck },
+            { id: 'export', label: '9. التصدير والطباعة', icon: Share2 },
+          ].map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id as any)}
+                className={`py-2 px-3.5 rounded-xl text-xs font-bold transition flex items-center gap-2 shrink-0 whitespace-nowrap cursor-pointer select-none border ${
+                  isActive
+                    ? 'bg-amber-500 text-slate-950 border-amber-500 shadow-xs font-black'
+                    : 'bg-white text-slate-700 hover:bg-amber-50 hover:text-amber-800 border-slate-200/90'
+                }`}
+              >
+                <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-slate-950' : 'text-amber-700'}`} />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
         </div>
 
         <button
           type="button"
           onClick={() => scrollNavTabs('left')}
-          className="absolute left-0 z-10 h-full px-1.5 bg-gradient-to-r from-slate-200 via-slate-100 to-transparent text-slate-700 hover:text-amber-700 flex items-center justify-center cursor-pointer shadow-2xs"
-          title="تمرير الأزرار لليصار"
+          className="absolute left-0 z-20 h-full px-2 bg-gradient-to-r from-slate-200 via-slate-100/90 to-transparent text-slate-700 hover:text-amber-700 flex items-center justify-center cursor-pointer shadow-xs rounded-l-2xl"
+          title="تمرير الأزرار لليسار"
         >
-          <ChevronLeft className="w-4 h-4" />
+          <ChevronLeft className="w-4 h-4 stroke-[2.5]" />
         </button>
       </div>
 
@@ -1593,16 +1554,68 @@ export const EditorToolbar: React.FC<Props> = ({
                     </div>
                   </div>
 
-                  {/* Header Offset Controls */}
-                  <OffsetPad
-                    title="تحريك الكتابة داخل الترويسة"
-                    subtitle="تحريك سطور الترويسة أفقياً ورأسياً"
-                    offsetX={certificateData.headerTextOffsetX || 0}
-                    offsetY={certificateData.headerTextOffsetY || 0}
-                    onChangeX={(val) => updateField('headerTextOffsetX', val)}
-                    onChangeY={(val) => updateField('headerTextOffsetY', val)}
-                    onReset={() => onChange({ ...certificateData, headerTextOffsetX: 0, headerTextOffsetY: 0, updatedAt: new Date().toISOString() })}
-                  />
+                  {/* Header Offset Controls - Granular & Collective */}
+                  <div className="pt-2 border-t border-amber-200/80 space-y-2.5">
+                    <span className="block text-[11px] font-bold text-amber-950">
+                      🎯 خيارات تحريك عبارات الترويسة (كل جزء منفصل أو جماعي):
+                    </span>
+
+                    {/* Collective Header Movement */}
+                    <OffsetPad
+                      title="تحريك كامل الترويسة ككتلة واحدة"
+                      subtitle="تحريك كافة سطور الترويسة معاً أفقياً ورأسياً"
+                      offsetX={certificateData.headerTextOffsetX || 0}
+                      offsetY={certificateData.headerTextOffsetY || 0}
+                      onChangeX={(val) => updateField('headerTextOffsetX', val)}
+                      onChangeY={(val) => updateField('headerTextOffsetY', val)}
+                      onReset={() => onChange({ ...certificateData, headerTextOffsetX: 0, headerTextOffsetY: 0, updatedAt: new Date().toISOString() })}
+                    />
+
+                    {/* Granular Line Movements */}
+                    <div className="bg-white/80 p-2.5 rounded-xl border border-amber-200/70 space-y-2">
+                      <span className="text-[10px] font-bold text-slate-700 block">
+                        تحريك كل سطر في الترويسة بشكل منفصل:
+                      </span>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <OffsetPad
+                          title="السطر 1 (المملكة)"
+                          subtitle="تحريك السطر الأول"
+                          offsetX={certificateData.headerLine1OffsetX || 0}
+                          offsetY={certificateData.headerLine1OffsetY || 0}
+                          onChangeX={(val) => updateField('headerLine1OffsetX', val)}
+                          onChangeY={(val) => updateField('headerLine1OffsetY', val)}
+                          onReset={() => onChange({ ...certificateData, headerLine1OffsetX: 0, headerLine1OffsetY: 0, updatedAt: new Date().toISOString() })}
+                        />
+                        <OffsetPad
+                          title="السطر 2 (الوزارة)"
+                          subtitle="تحريك السطر الثاني"
+                          offsetX={certificateData.headerLine2OffsetX || 0}
+                          offsetY={certificateData.headerLine2OffsetY || 0}
+                          onChangeX={(val) => updateField('headerLine2OffsetX', val)}
+                          onChangeY={(val) => updateField('headerLine2OffsetY', val)}
+                          onReset={() => onChange({ ...certificateData, headerLine2OffsetX: 0, headerLine2OffsetY: 0, updatedAt: new Date().toISOString() })}
+                        />
+                        <OffsetPad
+                          title="السطر 3 (الإدارة)"
+                          subtitle="تحريك السطر الثالث"
+                          offsetX={certificateData.headerLine3OffsetX || 0}
+                          offsetY={certificateData.headerLine3OffsetY || 0}
+                          onChangeX={(val) => updateField('headerLine3OffsetX', val)}
+                          onChangeY={(val) => updateField('headerLine3OffsetY', val)}
+                          onReset={() => onChange({ ...certificateData, headerLine3OffsetX: 0, headerLine3OffsetY: 0, updatedAt: new Date().toISOString() })}
+                        />
+                        <OffsetPad
+                          title="اسم المدرسة"
+                          subtitle="تحريك اسم المدرسة"
+                          offsetX={certificateData.headerSchoolNameOffsetX || 0}
+                          offsetY={certificateData.headerSchoolNameOffsetY || 0}
+                          onChangeX={(val) => updateField('headerSchoolNameOffsetX', val)}
+                          onChangeY={(val) => updateField('headerSchoolNameOffsetY', val)}
+                          onReset={() => onChange({ ...certificateData, headerSchoolNameOffsetX: 0, headerSchoolNameOffsetY: 0, updatedAt: new Date().toISOString() })}
+                        />
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1666,6 +1679,15 @@ export const EditorToolbar: React.FC<Props> = ({
                   placeholder="مثال: عبد الله محمد الشمري"
                   className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 font-bold text-slate-800"
                 />
+                <OffsetPad
+                  title="اسم الطالب"
+                  subtitle="تحريك موضع اسم الطالب / المكرم أفقياً ورأسياً"
+                  offsetX={certificateData.studentNameOffsetX || 0}
+                  offsetY={certificateData.studentNameOffsetY || 0}
+                  onChangeX={(val) => updateField('studentNameOffsetX', val)}
+                  onChangeY={(val) => updateField('studentNameOffsetY', val)}
+                  onReset={() => onChange({ ...certificateData, studentNameOffsetX: 0, studentNameOffsetY: 0, updatedAt: new Date().toISOString() })}
+                />
               </div>
 
               <div>
@@ -1676,6 +1698,15 @@ export const EditorToolbar: React.FC<Props> = ({
                   onChange={(e) => updateField('grade', e.target.value)}
                   placeholder="مثال: الصف الأول الثانوي - أ"
                   className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+                <OffsetPad
+                  title="الصف / الشعبة"
+                  subtitle="تحريك موضع الصف أفقياً ورأسياً"
+                  offsetX={certificateData.gradeOffsetX || 0}
+                  offsetY={certificateData.gradeOffsetY || 0}
+                  onChangeX={(val) => updateField('gradeOffsetX', val)}
+                  onChangeY={(val) => updateField('gradeOffsetY', val)}
+                  onReset={() => onChange({ ...certificateData, gradeOffsetX: 0, gradeOffsetY: 0, updatedAt: new Date().toISOString() })}
                 />
               </div>
 
@@ -1797,6 +1828,15 @@ export const EditorToolbar: React.FC<Props> = ({
                 placeholder="مثال: شهادة شكر وتقدير"
                 className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 font-bold"
               />
+              <OffsetPad
+                title="عنوان الشهادة الرئيسي"
+                subtitle="تحريك العنوان الرئيسي للشهادة أفقياً ورأسياً"
+                offsetX={certificateData.titleOffsetX || 0}
+                offsetY={certificateData.titleOffsetY || 0}
+                onChangeX={(val) => updateField('titleOffsetX', val)}
+                onChangeY={(val) => updateField('titleOffsetY', val)}
+                onReset={() => onChange({ ...certificateData, titleOffsetX: 0, titleOffsetY: 0, updatedAt: new Date().toISOString() })}
+              />
             </div>
 
             <div>
@@ -1807,6 +1847,15 @@ export const EditorToolbar: React.FC<Props> = ({
                 onChange={(e) => updateField('subtitle', e.target.value)}
                 placeholder="مثال: وسام التميز للعام الدراسي 1447 هـ"
                 className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+              />
+              <OffsetPad
+                title="العنوان الفرعي"
+                subtitle="تحريك سطر العنوان الفرعي للشهادة"
+                offsetX={certificateData.subtitleOffsetX || 0}
+                offsetY={certificateData.subtitleOffsetY || 0}
+                onChangeX={(val) => updateField('subtitleOffsetX', val)}
+                onChangeY={(val) => updateField('subtitleOffsetY', val)}
+                onReset={() => onChange({ ...certificateData, subtitleOffsetX: 0, subtitleOffsetY: 0, updatedAt: new Date().toISOString() })}
               />
             </div>
 
@@ -1822,6 +1871,15 @@ export const EditorToolbar: React.FC<Props> = ({
                 placeholder="مثال: يسر إدارة المدرسة أن تمنح هذه الشهادة إلى الطالب المبدع:"
                 className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 font-medium"
               />
+              <OffsetPad
+                title="مقدمة التكريم"
+                subtitle="تحريك عبارة مقدمة التكريم التمهيدية"
+                offsetX={certificateData.recipientIntroOffsetX || 0}
+                offsetY={certificateData.recipientIntroOffsetY || 0}
+                onChangeX={(val) => updateField('recipientIntroOffsetX', val)}
+                onChangeY={(val) => updateField('recipientIntroOffsetY', val)}
+                onReset={() => onChange({ ...certificateData, recipientIntroOffsetX: 0, recipientIntroOffsetY: 0, updatedAt: new Date().toISOString() })}
+              />
             </div>
 
             <div>
@@ -1832,6 +1890,15 @@ export const EditorToolbar: React.FC<Props> = ({
                 onChange={(e) => updateField('appreciationText', e.target.value)}
                 placeholder="نص التكريم المشجع..."
                 className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 leading-relaxed"
+              />
+              <OffsetPad
+                title="نص التقدير والشكر"
+                subtitle="تحريك فقرة التقدير والثناء أفقياً ورأسياً"
+                offsetX={certificateData.appreciationTextOffsetX || 0}
+                offsetY={certificateData.appreciationTextOffsetY || 0}
+                onChangeX={(val) => updateField('appreciationTextOffsetX', val)}
+                onChangeY={(val) => updateField('appreciationTextOffsetY', val)}
+                onReset={() => onChange({ ...certificateData, appreciationTextOffsetX: 0, appreciationTextOffsetY: 0, updatedAt: new Date().toISOString() })}
               />
             </div>
 
@@ -1851,13 +1918,24 @@ export const EditorToolbar: React.FC<Props> = ({
                 </label>
               </div>
               {(certificateData.showPoemOrQuote ?? true) && (
-                <textarea
-                  value={certificateData.poemOrQuote}
-                  onChange={(e) => updateField('poemOrQuote', e.target.value)}
-                  placeholder="«من خطا نحو العلا خطوةً... جنى من الثمار أحلى النعم»"
-                  rows={2}
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 italic bg-white resize-y mt-1.5"
-                />
+                <>
+                  <textarea
+                    value={certificateData.poemOrQuote}
+                    onChange={(e) => updateField('poemOrQuote', e.target.value)}
+                    placeholder="«من خطا نحو العلا خطوةً... جنى من الثمار أحلى النعم»"
+                    rows={2}
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 italic bg-white resize-y mt-1.5"
+                  />
+                  <OffsetPad
+                    title="بيت الشعر / المقولة"
+                    subtitle="تحريك بيت الشعر أو المقولة الملهمة"
+                    offsetX={certificateData.poemOrQuoteOffsetX || 0}
+                    offsetY={certificateData.poemOrQuoteOffsetY || 0}
+                    onChangeX={(val) => updateField('poemOrQuoteOffsetX', val)}
+                    onChangeY={(val) => updateField('poemOrQuoteOffsetY', val)}
+                    onReset={() => onChange({ ...certificateData, poemOrQuoteOffsetX: 0, poemOrQuoteOffsetY: 0, updatedAt: new Date().toISOString() })}
+                  />
+                </>
               )}
             </div>
 
@@ -2074,6 +2152,16 @@ export const EditorToolbar: React.FC<Props> = ({
                             🔣 أرقام (٠, ١, ٢)
                           </button>
                         </div>
+
+                        <OffsetPad
+                          title="سطر التاريخ"
+                          subtitle="تحريك سطر التاريخ أفقياً ورأسياً"
+                          offsetX={certificateData.headerDateOffsetX || 0}
+                          offsetY={certificateData.headerDateOffsetY || 0}
+                          onChangeX={(val) => updateField('headerDateOffsetX', val)}
+                          onChangeY={(val) => updateField('headerDateOffsetY', val)}
+                          onReset={() => onChange({ ...certificateData, headerDateOffsetX: 0, headerDateOffsetY: 0, updatedAt: new Date().toISOString() })}
+                        />
                       </div>
                     </div>
                   )}
@@ -2095,20 +2183,31 @@ export const EditorToolbar: React.FC<Props> = ({
                   </div>
 
                   {(certificateData.showHeaderPlace ?? true) && (
-                    <div className="flex gap-1.5">
-                      <input
-                        type="text"
-                        value={certificateData.placeLabel || 'المكان'}
-                        onChange={(e) => updateField('placeLabel', e.target.value)}
-                        placeholder="تسمية (المكان)"
-                        className="w-24 px-2 py-1.5 text-xs border border-slate-300 rounded-lg bg-white"
-                      />
-                      <input
-                        type="text"
-                        value={certificateData.issuePlace}
-                        onChange={(e) => updateField('issuePlace', e.target.value)}
-                        placeholder="الرياض"
-                        className="flex-1 px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg bg-white"
+                    <div>
+                      <div className="flex gap-1.5">
+                        <input
+                          type="text"
+                          value={certificateData.placeLabel || 'المكان'}
+                          onChange={(e) => updateField('placeLabel', e.target.value)}
+                          placeholder="تسمية (المكان)"
+                          className="w-24 px-2 py-1.5 text-xs border border-slate-300 rounded-lg bg-white"
+                        />
+                        <input
+                          type="text"
+                          value={certificateData.issuePlace}
+                          onChange={(e) => updateField('issuePlace', e.target.value)}
+                          placeholder="الرياض"
+                          className="flex-1 px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg bg-white"
+                        />
+                      </div>
+                      <OffsetPad
+                        title="سطر المكان"
+                        subtitle="تحريك سطر المكان أفقياً ورأسياً"
+                        offsetX={certificateData.headerPlaceOffsetX || 0}
+                        offsetY={certificateData.headerPlaceOffsetY || 0}
+                        onChangeX={(val) => updateField('headerPlaceOffsetX', val)}
+                        onChangeY={(val) => updateField('headerPlaceOffsetY', val)}
+                        onReset={() => onChange({ ...certificateData, headerPlaceOffsetX: 0, headerPlaceOffsetY: 0, updatedAt: new Date().toISOString() })}
                       />
                     </div>
                   )}
@@ -2143,20 +2242,31 @@ export const EditorToolbar: React.FC<Props> = ({
                     </label>
                   </div>
                   {certificateData.showHeaderCertNumber && (
-                    <div className="flex gap-1.5">
-                      <input
-                        type="text"
-                        value={certificateData.certNumberLabel || 'الرقم'}
-                        onChange={(e) => updateField('certNumberLabel', e.target.value)}
-                        placeholder="التسمية (الرقم)"
-                        className="w-24 px-2 py-1.5 text-xs border border-slate-300 rounded-lg bg-white font-medium"
-                      />
-                      <input
-                        type="text"
-                        value={certificateData.certNumber || certificateData.verificationCode || certificateData.certificateId || ''}
-                        onChange={(e) => updateField('certNumber', e.target.value)}
-                        placeholder="مثال: REF-1447/0892"
-                        className="flex-1 px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg bg-white font-mono font-medium text-amber-900"
+                    <div>
+                      <div className="flex gap-1.5">
+                        <input
+                          type="text"
+                          value={certificateData.certNumberLabel || 'الرقم'}
+                          onChange={(e) => updateField('certNumberLabel', e.target.value)}
+                          placeholder="التسمية (الرقم)"
+                          className="w-24 px-2 py-1.5 text-xs border border-slate-300 rounded-lg bg-white font-medium"
+                        />
+                        <input
+                          type="text"
+                          value={certificateData.certNumber || certificateData.verificationCode || certificateData.certificateId || ''}
+                          onChange={(e) => updateField('certNumber', e.target.value)}
+                          placeholder="مثال: REF-1447/0892"
+                          className="flex-1 px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg bg-white font-mono font-medium text-amber-900"
+                        />
+                      </div>
+                      <OffsetPad
+                        title="رقم الشهادة / القيد"
+                        subtitle="تحريك سطر رقم القيد أفقياً ورأسياً"
+                        offsetX={certificateData.headerCertNumberOffsetX || 0}
+                        offsetY={certificateData.headerCertNumberOffsetY || 0}
+                        onChangeX={(val) => updateField('headerCertNumberOffsetX', val)}
+                        onChangeY={(val) => updateField('headerCertNumberOffsetY', val)}
+                        onReset={() => onChange({ ...certificateData, headerCertNumberOffsetX: 0, headerCertNumberOffsetY: 0, updatedAt: new Date().toISOString() })}
                       />
                     </div>
                   )}
@@ -2620,99 +2730,1372 @@ export const EditorToolbar: React.FC<Props> = ({
           </div>
         )}
 
-        {/* TAB 2: PRESET TEMPLATES */}
-        {activeTab === 'templates' && (
-          <div className="space-y-4">
-            
-            {/* Gallery Banner Button */}
-            <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 p-4 rounded-2xl text-white flex flex-col sm:flex-row items-center justify-between gap-3 shadow-md border border-slate-800">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-amber-500 text-slate-950 font-black flex items-center justify-center shrink-0 shadow-lg">
-                  <LayoutGrid className="w-5 h-5" />
-                </div>
-                <div>
-                  <h4 className="font-extrabold text-xs sm:text-sm text-amber-400 font-['Cairo']">
-                    معرض شبكة القوالب التفاعلية (Full Grid Gallery)
-                  </h4>
-                  <p className="text-[11px] text-slate-300">
-                    استعرض القوالب الـ 20 في شبكة تكبير متكاملة مع تصنيف الفئات والمعاينة الحية
-                  </p>
-                </div>
-              </div>
+        {/* TAB 2: PRESET TEMPLATES & LAYOUTS */}
+        {activeTab === 'templates' && (() => {
+          const layoutPresetNameMap: Record<string, { name: string; icon: string }> = {
+            'classic-standard': { name: 'التخطيط الكلاسيكي المتوازن', icon: '📜' },
+            'classic': { name: 'التخطيط الكلاسيكي المتوازن', icon: '📜' },
+            'modern-split': { name: 'التخطيط العصري المدمج', icon: '✨' },
+            'modern': { name: 'التخطيط العصري المدمج', icon: '✨' },
+            'sidebar-right': { name: 'الإطار الجانبي الأيمن', icon: '📑' },
+            'sidebar': { name: 'الإطار الجانبي الأيمن', icon: '📑' },
+            'sidebar-left': { name: 'الإطار الجانبي الأيسر', icon: '🗂️' },
+            'minimal-centered': { name: 'الملكي المتمركز', icon: '👑' },
+            'centered': { name: 'الملكي المتمركز', icon: '👑' },
+            'executive-horizontal': { name: 'التنفيذي الأكاديمي', icon: '🎓' },
+            'executive': { name: 'التنفيذي الأكاديمي', icon: '🎓' },
+            'diploma-grand': { name: 'الدبلوم الرفيع', icon: '🏆' },
+            'custom-grid': { name: 'تخطيط مخصص يدوي', icon: '🛠️' },
+          };
 
-              <button
-                onClick={() => setIsGalleryModalOpen(true)}
-                className="w-full sm:w-auto px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-md transition flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
-              >
-                <Sparkles className="w-4 h-4" />
-                فتح المعرض الشامل
-              </button>
-            </div>
+          const currentPresetId = certificateData.layoutPreset || 'classic-standard';
+          const currentPresetInfo = layoutPresetNameMap[currentPresetId] || { name: 'كلاسيكي متوازن', icon: '📜' };
+          const issuesInfo = detectLayoutPotentialIssues(certificateData);
 
-            <p className="text-xs font-bold text-slate-700">اختر القالب من المعاينة المصغرة للشهادات:</p>
+          const templateCategories = ['الكل', ...Array.from(new Set(TEMPLATE_PRESETS.map(t => t.category).filter(Boolean)))];
+          const filteredTemplates = selectedTemplateCategory === 'الكل'
+            ? TEMPLATE_PRESETS
+            : TEMPLATE_PRESETS.filter(t => t.category === selectedTemplateCategory);
 
-            {/* Grid of Mini Certificate Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-              {TEMPLATE_PRESETS.map((tmpl) => {
-                const d = tmpl.defaultData;
-                return (
-                  <div
-                    key={tmpl.id}
-                    onClick={() => applyPresetTemplate(tmpl.id)}
-                    className="p-2.5 rounded-2xl border border-slate-200 hover:border-amber-500 cursor-pointer transition-all shadow-2xs hover:shadow-md group relative bg-white flex flex-col justify-between"
-                  >
-                    {/* Mini Certificate Box */}
-                    <div
-                      className="w-full aspect-[1.5] rounded-xl shadow-2xs relative overflow-hidden flex flex-col justify-between p-2.5 border transition-transform group-hover:scale-[1.01]"
-                      style={{
-                        backgroundColor: d.backgroundColor || '#ffffff',
-                        color: d.textColor || '#0f172a',
-                        borderColor: d.primaryColor,
-                        borderWidth: '2px',
-                        borderStyle: 'double',
-                      }}
-                    >
-                      <div className="text-center space-y-0.5">
-                        <span className="text-[8px] font-bold block opacity-75" style={{ color: d.secondaryColor || d.primaryColor }}>
-                          {d.schoolName}
-                        </span>
-                        <h6 className="text-[10px] font-black leading-tight line-clamp-1" style={{ color: d.primaryColor }}>
-                          {d.title}
-                        </h6>
-                      </div>
-
-                      <div className="my-1 text-center py-1 px-1.5 bg-white/80 rounded border border-black/5">
-                        <span className="text-[7px] block opacity-70">طالب التكريم:</span>
-                        <span className="text-[10px] font-black block line-clamp-1" style={{ color: d.primaryColor }}>
-                          {d.studentName}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center justify-between text-[7px] opacity-80 pt-1 border-t border-black/10">
-                        <span className="font-bold" style={{ color: d.primaryColor }}>{d.badgeTitle || 'وسام التميز'}</span>
-                        <span>{tmpl.category}</span>
-                      </div>
+          return (
+            <div className="space-y-5">
+              
+              {/* FRAME 1: EXPANDABLE CSS GRID LAYOUTS WINDOW */}
+              <div className="bg-gradient-to-br from-amber-50/90 via-white to-orange-50/60 rounded-2xl border-2 border-amber-300/80 shadow-xs overflow-hidden transition-all">
+                
+                {/* Main Collapsible Header for CSS Grid Layouts */}
+                <div
+                  onClick={() => setIsGridLayoutSectionOpen(!isGridLayoutSectionOpen)}
+                  className="p-4 bg-gradient-to-r from-amber-100/90 via-amber-50/80 to-orange-100/70 hover:from-amber-200/80 hover:to-orange-200/60 transition cursor-pointer flex flex-wrap items-center justify-between gap-2.5 select-none border-b border-amber-200/70"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-black shadow-xs">
+                      <Layers className="w-5 h-5" />
                     </div>
-
-                    {/* Card Title & Desc */}
-                    <div className="mt-2.5 px-1 flex items-center justify-between">
-                      <div>
-                        <h5 className="font-extrabold text-xs text-slate-800 group-hover:text-amber-700 transition">
-                          {tmpl.name}
-                        </h5>
-                        <p className="text-[10px] text-slate-500 line-clamp-1 mt-0.5">{tmpl.description}</p>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-sm font-black text-slate-900 font-['Cairo']">
+                          خيارات قوالب تخطيط الشهادة (CSS Grid Layouts)
+                        </h4>
+                        <span className="text-[10px] bg-amber-200 text-amber-950 font-black px-2 py-0.5 rounded-full border border-amber-400/80 shadow-2xs">
+                          CSS Grid متجاوب
+                        </span>
                       </div>
-
-                      <span className="text-[10px] bg-slate-100 group-hover:bg-amber-100 text-slate-700 group-hover:text-amber-900 font-bold px-2 py-1 rounded-lg shrink-0 transition">
-                        تطبيق
-                      </span>
+                      <p className="text-[11px] text-slate-600 mt-0.5">
+                        تخطيط هندسي متجاوب يضمن عدم تداخل العناصر أو خروجها عن حدود الشهادة
+                      </p>
                     </div>
                   </div>
-                );
-              })}
+
+                  <div className="flex items-center gap-2">
+                    {/* Active preset indicator badge */}
+                    <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 bg-white/90 rounded-lg border border-amber-300 text-xs font-bold text-slate-800 shadow-2xs">
+                      <span className="text-amber-600">{currentPresetInfo.icon}</span>
+                      <span>النمط:</span>
+                      <strong className="text-amber-900">{currentPresetInfo.name}</strong>
+                    </div>
+
+                    {/* Expand/Collapse Toggle Button */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsGridLayoutSectionOpen(!isGridLayoutSectionOpen);
+                      }}
+                      className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <span>{isGridLayoutSectionOpen ? 'طي النافذة' : 'توسيع خيارات التخطيط'}</span>
+                      <ChevronDown className={`w-4 h-4 transition-transform duration-300 ${isGridLayoutSectionOpen ? 'rotate-180' : ''}`} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Sub-Options Container (When Main Grid Window is Expanded) */}
+                {isGridLayoutSectionOpen && (
+                  <div className="p-4 space-y-3.5 animate-fade-in">
+
+                    {/* SUB-OPTION 1: 7 CSS Grid Layout Presets */}
+                    <div className="bg-white/95 rounded-xl border border-amber-200/90 shadow-2xs overflow-hidden">
+                      <div
+                        onClick={() => setIsLayoutPresetsSubOpen(!isLayoutPresetsSubOpen)}
+                        className="p-3 bg-gradient-to-r from-amber-50/70 to-slate-50/50 hover:bg-amber-100/50 transition cursor-pointer flex flex-wrap items-center justify-between gap-2 select-none border-b border-slate-100"
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="w-7 h-7 rounded-lg bg-amber-500 text-slate-950 flex items-center justify-center font-bold">
+                            <LayoutGrid className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h5 className="text-xs font-black text-slate-900 font-['Cairo']">
+                                أنماط التخطيطات السبعة لـ CSS Grid
+                              </h5>
+                              <span className="text-[9px] bg-slate-100 text-slate-700 font-bold px-1.5 py-0.2 rounded border border-slate-300">
+                                8 تخطيطات هندسية
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-slate-500">
+                              اختر النمط الهندسي المناسب لتوزيع عناصر الشهادة والأوسمة والتواقيع
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] bg-amber-100 text-amber-900 font-bold px-2 py-0.5 rounded-md">
+                            {currentPresetInfo.icon} {currentPresetInfo.name}
+                          </span>
+                          <ChevronDown className={`w-4 h-4 text-slate-600 transition-transform duration-200 ${isLayoutPresetsSubOpen ? 'rotate-180' : ''}`} />
+                        </div>
+                      </div>
+
+                      {isLayoutPresetsSubOpen && (
+                        <div className="p-3.5 space-y-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                            {[
+                              {
+                                id: 'classic-standard',
+                                legacyId: 'classic',
+                                name: 'التخطيط الكلاسيكي المتوازن',
+                                desc: 'ترويسة ➔ عنوان ➔ متن ➔ أختام ➔ تواقيع متوازية',
+                                badge: 'الافتراضي القياسي',
+                                icon: '📜',
+                                diagram: (
+                                  <div className="w-full h-14 bg-slate-100 rounded-lg p-1 flex flex-col justify-between border border-slate-200 text-[6px] text-slate-500 font-mono">
+                                    <div className="h-2 bg-amber-200 rounded flex items-center justify-center font-bold">الترويسة</div>
+                                    <div className="h-2 bg-slate-200 rounded flex items-center justify-center">العنوان</div>
+                                    <div className="h-3.5 bg-amber-100 rounded flex items-center justify-center font-bold text-amber-800">متن التكريم</div>
+                                    <div className="grid grid-cols-3 gap-0.5">
+                                      <div className="h-2 bg-slate-200 rounded text-[5px] flex items-center justify-center">وسام</div>
+                                      <div className="h-2 bg-slate-200 rounded text-[5px] flex items-center justify-center">ختم</div>
+                                      <div className="h-2 bg-emerald-200 rounded text-[5px] flex items-center justify-center text-emerald-800 font-bold">QR</div>
+                                    </div>
+                                    <div className="h-2 bg-slate-200 rounded flex items-center justify-center">التواقيع</div>
+                                  </div>
+                                )
+                              },
+                              {
+                                id: 'modern-split',
+                                legacyId: 'modern',
+                                name: 'التخطيط العصري المدمج',
+                                desc: 'الأختام ومربع التوثيق بجانب التوقيع لتوسيع متن الشهادة',
+                                badge: 'عصري وفسيح',
+                                icon: '✨',
+                                diagram: (
+                                  <div className="w-full h-14 bg-slate-100 rounded-lg p-1 flex flex-col justify-between border border-slate-200 text-[6px] text-slate-500 font-mono">
+                                    <div className="h-2 bg-amber-200 rounded flex items-center justify-center font-bold">الترويسة والعنوان</div>
+                                    <div className="h-5 bg-amber-100 rounded flex items-center justify-center font-bold text-amber-800">متن الشهادة الفسيح</div>
+                                    <div className="grid grid-cols-2 gap-1">
+                                      <div className="h-3.5 bg-emerald-100 border border-emerald-200 rounded flex items-center justify-center text-[5.5px] font-bold text-emerald-800">الأختام والتوثيق</div>
+                                      <div className="h-3.5 bg-slate-200 rounded flex items-center justify-center text-[5.5px]">التواقيع المعتمدة</div>
+                                    </div>
+                                  </div>
+                                )
+                              },
+                              {
+                                id: 'sidebar-right',
+                                legacyId: 'sidebar',
+                                name: 'تخطيط الإطار الجانبي الأيمن',
+                                desc: 'عمود جانبي فاخر للأوسمة والأختام والـ QR على اليمين',
+                                badge: 'أنيق ومميز',
+                                icon: '📑',
+                                diagram: (
+                                  <div className="w-full h-14 bg-slate-100 rounded-lg p-1 grid grid-cols-3 gap-1 border border-slate-200 text-[6px] text-slate-500 font-mono">
+                                    <div className="bg-amber-100 border border-amber-200 rounded p-0.5 flex flex-col justify-between items-center text-[5px] text-amber-900 font-bold">
+                                      <span>وسام</span>
+                                      <span>ختم</span>
+                                      <span className="text-emerald-700">QR</span>
+                                    </div>
+                                    <div className="col-span-2 flex flex-col justify-between">
+                                      <div className="h-2 bg-slate-200 rounded flex items-center justify-center">الترويسة</div>
+                                      <div className="h-5 bg-amber-50 border border-amber-200/60 rounded flex items-center justify-center font-bold text-amber-800">متن التكريم</div>
+                                      <div className="h-2.5 bg-slate-200 rounded flex items-center justify-center">التواقيع</div>
+                                    </div>
+                                  </div>
+                                )
+                              },
+                              {
+                                id: 'sidebar-left',
+                                name: 'تخطيط الإطار الجانبي الأيسر',
+                                desc: 'عمود جانبي للأوسمة والتوثيق على اليسار ومتن بارز',
+                                badge: 'متناسق ومبتكر',
+                                icon: '🗂️',
+                                diagram: (
+                                  <div className="w-full h-14 bg-slate-100 rounded-lg p-1 grid grid-cols-3 gap-1 border border-slate-200 text-[6px] text-slate-500 font-mono">
+                                    <div className="col-span-2 flex flex-col justify-between">
+                                      <div className="h-2 bg-slate-200 rounded flex items-center justify-center">الترويسة</div>
+                                      <div className="h-5 bg-amber-50 border border-amber-200/60 rounded flex items-center justify-center font-bold text-amber-800">متن التكريم</div>
+                                      <div className="h-2.5 bg-slate-200 rounded flex items-center justify-center">التواقيع</div>
+                                    </div>
+                                    <div className="bg-amber-100 border border-amber-200 rounded p-0.5 flex flex-col justify-between items-center text-[5px] text-amber-900 font-bold">
+                                      <span>وسام</span>
+                                      <span>ختم</span>
+                                      <span className="text-emerald-700">QR</span>
+                                    </div>
+                                  </div>
+                                )
+                              },
+                              {
+                                id: 'minimal-centered',
+                                legacyId: 'centered',
+                                name: 'التخطيط الملكي المتمركز',
+                                desc: 'محاذاة متمركزة فائقة التناظر تركز على وسام الفخر والأصالة',
+                                badge: 'فخامة ملكية',
+                                icon: '👑',
+                                diagram: (
+                                  <div className="w-full h-14 bg-slate-100 rounded-lg p-1 flex flex-col justify-between border border-slate-200 text-[6px] text-slate-500 font-mono items-center">
+                                    <div className="h-2 w-3/4 bg-amber-200 rounded flex items-center justify-center font-bold">الترويسة الملكية</div>
+                                    <div className="h-2 w-1/2 bg-slate-200 rounded flex items-center justify-center">العنوان الذهبي</div>
+                                    <div className="h-3 w-4/5 bg-amber-100 rounded flex items-center justify-center font-bold text-amber-800">نص التكريم المتمركز</div>
+                                    <div className="h-2 w-2/3 bg-emerald-100 rounded flex items-center justify-center font-bold text-emerald-800 text-[5px]">الأوسمة والتوثيق</div>
+                                    <div className="h-2 w-3/4 bg-slate-200 rounded flex items-center justify-center">التواقيع الملكية</div>
+                                  </div>
+                                )
+                              },
+                              {
+                                id: 'executive-horizontal',
+                                legacyId: 'executive',
+                                name: 'التخطيط التنفيذي الأكاديمي',
+                                desc: 'توثيق معتمد مدمج بجانب المتن وتواقيع عريضة أسفل الشهادة',
+                                badge: 'جامعات ومؤسسات',
+                                icon: '🎓',
+                                diagram: (
+                                  <div className="w-full h-14 bg-slate-100 rounded-lg p-1 flex flex-col justify-between border border-slate-200 text-[6px] text-slate-500 font-mono">
+                                    <div className="h-2 bg-amber-200 rounded flex items-center justify-center font-bold">الترويسة الرسمية</div>
+                                    <div className="grid grid-cols-3 gap-1 h-5">
+                                      <div className="col-span-2 bg-amber-50 border border-amber-200/60 rounded flex items-center justify-center font-bold text-amber-800">نص التكريم</div>
+                                      <div className="bg-emerald-50 border border-emerald-200 rounded flex flex-col items-center justify-center text-[5px] text-emerald-800 font-bold">
+                                        <span>الختم</span>
+                                        <span>والتوثيق</span>
+                                      </div>
+                                    </div>
+                                    <div className="h-2.5 bg-slate-200 rounded flex items-center justify-center font-bold">التواقيع الرسمية العريضة</div>
+                                  </div>
+                                )
+                              },
+                              {
+                                id: 'diploma-grand',
+                                name: 'تخطيط الدبلوم الرفيع',
+                                desc: 'توقيعات في المنتصف وأختام وشارات الاعتماد في الهامش السفلي',
+                                badge: 'شهادات تخرج ودبلومات',
+                                icon: '🏆',
+                                diagram: (
+                                  <div className="w-full h-14 bg-slate-100 rounded-lg p-1 flex flex-col justify-between border border-slate-200 text-[6px] text-slate-500 font-mono">
+                                    <div className="h-2 bg-amber-200 rounded flex items-center justify-center font-bold">الترويسة المعتمدة</div>
+                                    <div className="h-2 bg-slate-200 rounded flex items-center justify-center">العنوان</div>
+                                    <div className="h-3 bg-amber-100 rounded flex items-center justify-center font-bold text-amber-800">متن الشهادة والدرجة</div>
+                                    <div className="h-2 bg-slate-200 rounded flex items-center justify-center font-bold">التواقيع المعتمدة</div>
+                                    <div className="grid grid-cols-3 gap-0.5">
+                                      <div className="h-2 bg-slate-200 rounded text-[5px] flex items-center justify-center">وسام</div>
+                                      <div className="h-2 bg-slate-200 rounded text-[5px] flex items-center justify-center">ختم</div>
+                                      <div className="h-2 bg-emerald-200 rounded text-[5px] flex items-center justify-center text-emerald-800 font-bold">QR</div>
+                                    </div>
+                                  </div>
+                                )
+                              },
+                              {
+                                id: 'custom-grid',
+                                name: 'تخطيط مخصص يدوي (Custom Grid)',
+                                desc: 'تحكم كامل عبر كتابة وتعديل grid-template-areas مع فحص فوري للسلامة',
+                                badge: 'محرر يدوي متقدم',
+                                icon: '🛠️',
+                                diagram: (
+                                  <div className="w-full h-14 bg-slate-900 rounded-lg p-1 flex flex-col justify-between border border-amber-500/60 text-[6px] text-amber-300 font-mono">
+                                    <div className="flex justify-between items-center text-[5px] text-amber-400 font-bold px-0.5">
+                                      <span>grid-template-areas</span>
+                                      <span className="text-emerald-400 font-bold">● يدوي</span>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-0.5 my-auto">
+                                      <div className="h-2.5 bg-amber-500/30 border border-amber-500/40 rounded flex items-center justify-center font-bold text-amber-200">header</div>
+                                      <div className="h-2.5 bg-sky-500/30 border border-sky-500/40 rounded flex items-center justify-center font-bold text-sky-200">title</div>
+                                      <div className="h-3 bg-emerald-500/30 border border-emerald-500/40 rounded flex items-center justify-center font-bold text-emerald-200">body</div>
+                                      <div className="h-3 bg-violet-500/30 border border-violet-500/40 rounded flex items-center justify-center font-bold text-violet-200">stamps</div>
+                                    </div>
+                                    <div className="h-2 bg-slate-700/80 rounded flex items-center justify-center text-[5px] text-slate-300">signatures signatures</div>
+                                  </div>
+                                )
+                              },
+                            ].map((preset) => {
+                              const isCurrent = currentPresetId === preset.id || (preset.legacyId && currentPresetId === preset.legacyId);
+                              return (
+                                <button
+                                  key={preset.id}
+                                  type="button"
+                                  onClick={() => updateField('layoutPreset', preset.id as LayoutPreset)}
+                                  className={`p-2.5 rounded-xl border text-right transition flex flex-col justify-between gap-2 cursor-pointer shadow-2xs group ${
+                                    isCurrent
+                                      ? 'border-amber-500 bg-amber-50/80 ring-2 ring-amber-400'
+                                      : 'border-slate-200 bg-white hover:border-amber-300 hover:bg-slate-50'
+                                  }`}
+                                >
+                                  <div className="w-full">
+                                    {preset.diagram}
+                                    <div className="flex items-center justify-between mt-2">
+                                      <span className="font-extrabold text-xs text-slate-900 group-hover:text-amber-800 transition flex items-center gap-1">
+                                        <span>{preset.icon}</span>
+                                        <span>{preset.name}</span>
+                                      </span>
+                                      {isCurrent && (
+                                        <span className="text-[9px] bg-amber-500 text-slate-950 font-black px-1.5 py-0.5 rounded shadow-2xs">
+                                          مفعّل
+                                        </span>
+                                      )}
+                                    </div>
+                                    <p className="text-[10px] text-slate-500 line-clamp-2 mt-0.5 leading-snug">
+                                      {preset.desc}
+                                    </p>
+                                  </div>
+
+                                  <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-[9px] font-bold text-slate-600">
+                                    <span className="text-amber-700">{preset.badge}</span>
+                                    <span className={`px-2 py-0.5 rounded transition ${isCurrent ? 'bg-amber-500 text-slate-950 font-black' : 'bg-slate-100 group-hover:bg-amber-200'}`}>
+                                      {isCurrent ? 'النمط الحالي' : 'تطبيق هذا التخطيط'}
+                                    </span>
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* SUB-OPTION 2: AI Auto-Fit & Layout Optimizer */}
+                    <div className="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white rounded-xl border border-amber-500/50 shadow-md overflow-hidden relative">
+                      <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/10 rounded-full blur-2xl pointer-events-none" />
+                      
+                      <div
+                        onClick={() => setIsAiLayoutOptimizerSubOpen(!isAiLayoutOptimizerSubOpen)}
+                        className="p-3 bg-slate-950/60 hover:bg-slate-950/80 transition cursor-pointer flex flex-wrap items-center justify-between gap-2 relative z-10 select-none border-b border-amber-500/20"
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-amber-500 to-yellow-300 text-slate-950 flex items-center justify-center font-black shadow-xs">
+                            <BrainCircuit className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs font-black font-['Cairo'] text-amber-300">
+                                التنسيق والتوسيط التلقائي بالذكاء الاصطناعي (Smart Auto-Fit)
+                              </span>
+                              <span className="text-[9px] bg-amber-400/20 text-amber-300 border border-amber-400/40 px-1.5 py-0.2 rounded font-bold">
+                                Gemini 3.7
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-slate-300">
+                              حساب ذكي فوري لمقاسات الخطوط، الهوامش الآمنة، وتوسيط المتن والتواقيع بدون أي تداخل
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          {issuesInfo.hasIssues ? (
+                            <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 border ${
+                              issuesInfo.severity === 'high' 
+                                ? 'bg-rose-500/20 text-rose-300 border-rose-500/40' 
+                                : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                            }`}>
+                              <AlertTriangle className="w-3 h-3 text-amber-400 shrink-0" />
+                              <span>{issuesInfo.issues.length} ملاحظات تنسيق</span>
+                            </div>
+                          ) : (
+                            <div className="px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
+                              <span>التخطيط متناسق وآمن</span>
+                            </div>
+                          )}
+                          <ChevronDown className={`w-4 h-4 text-amber-300 transition-transform duration-200 ${isAiLayoutOptimizerSubOpen ? 'rotate-180' : ''}`} />
+                        </div>
+                      </div>
+
+                      {isAiLayoutOptimizerSubOpen && (
+                        <div className="p-3.5 space-y-3 relative z-10">
+                          {/* Quick Warning Details (if any detected) */}
+                          {issuesInfo.hasIssues && (
+                            <div className="p-2 bg-slate-800/80 border border-slate-700/80 rounded-lg text-[10px] space-y-1">
+                              {issuesInfo.issues.slice(0, 2).map((issue) => (
+                                <div key={issue.id} className="flex items-start gap-1.5 text-slate-300">
+                                  <span className="text-amber-400 mt-0.5">•</span>
+                                  <div>
+                                    <strong className="text-amber-200">{issue.title}:</strong> {issue.description}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Action Buttons Row */}
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleOptimizeLayoutAi()}
+                              disabled={isAiOptimizingLayout}
+                              className="px-3.5 py-1.5 bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-400 hover:from-amber-400 hover:to-yellow-300 text-slate-950 font-black text-xs rounded-xl shadow-md hover:shadow-amber-500/25 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {isAiOptimizingLayout ? (
+                                <>
+                                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                  <span>جاري التحليل الهندسي بالذكاء الاصطناعي...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Sparkles className="w-3.5 h-3.5" />
+                                  <span>تنسيق وملاءمة شاملة بالذكاء الاصطناعي ✨</span>
+                                </>
+                              )}
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleInstantAutoFit()}
+                              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 hover:border-amber-400 text-xs font-bold rounded-xl transition flex items-center gap-1 cursor-pointer"
+                            >
+                              <Wand2 className="w-3.5 h-3.5 text-amber-400" />
+                              <span>⚡ ملاءمة فورية وحساب الهوامش</span>
+                            </button>
+
+                            {previousCertDataBeforeLayoutAi && (
+                              <button
+                                type="button"
+                                onClick={handleUndoLayoutOptimization}
+                                className="px-2.5 py-1.5 bg-slate-800 hover:bg-rose-900/60 border border-slate-700 hover:border-rose-500 text-rose-300 text-xs font-bold rounded-xl transition flex items-center gap-1 cursor-pointer ms-auto"
+                              >
+                                <RotateCcw className="w-3 h-3" />
+                                <span>تراجع</span>
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Result Notice & Detailed Feedback Accordion */}
+                          {aiLayoutNotice && (
+                            <div className="p-2.5 bg-amber-500/15 border border-amber-500/30 rounded-lg text-xs space-y-1.5 animate-fade-in">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-1.5 font-bold text-amber-200">
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-amber-400" />
+                                  <span>تقرير التحسين الهندسي:</span>
+                                </div>
+                                {aiLayoutResult && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setIsAiLayoutDetailsOpen(!isAiLayoutDetailsOpen)}
+                                    className="text-[10px] text-amber-300 hover:underline flex items-center gap-0.5 cursor-pointer"
+                                  >
+                                    <span>{isAiLayoutDetailsOpen ? 'إخفاء التفاصيل' : 'عرض تفاصيل الأبعاد'}</span>
+                                    <ChevronDown className={`w-3 h-3 transition-transform ${isAiLayoutDetailsOpen ? 'rotate-180' : ''}`} />
+                                  </button>
+                                )}
+                              </div>
+                              <p className="text-[11px] text-slate-200 leading-relaxed">
+                                {aiLayoutNotice}
+                              </p>
+
+                              {isAiLayoutDetailsOpen && aiLayoutResult && (
+                                <div className="mt-2 pt-2 border-t border-amber-500/20 space-y-2 text-[10px]">
+                                  {aiLayoutResult.highlights && aiLayoutResult.highlights.length > 0 && (
+                                    <div className="space-y-1">
+                                      <span className="font-bold text-amber-300">أبرز التعديلات المنفذة:</span>
+                                      <ul className="list-disc list-inside text-slate-300 space-y-0.5 ps-1">
+                                        {aiLayoutResult.highlights.map((h, i) => (
+                                          <li key={i}>{h}</li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  )}
+
+                                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 pt-1">
+                                    <div className="p-1.5 bg-slate-900/90 rounded border border-slate-700 text-center">
+                                      <span className="text-slate-400 block text-[9px]">خط العنوان:</span>
+                                      <strong className="text-amber-300 font-mono text-xs">{aiLayoutResult.elementFontSizes.title}px</strong>
+                                    </div>
+                                    <div className="p-1.5 bg-slate-900/90 rounded border border-slate-700 text-center">
+                                      <span className="text-slate-400 block text-[9px]">اسم المكرم:</span>
+                                      <strong className="text-amber-300 font-mono text-xs">{aiLayoutResult.elementFontSizes.studentName}px</strong>
+                                    </div>
+                                    <div className="p-1.5 bg-slate-900/90 rounded border border-slate-700 text-center">
+                                      <span className="text-slate-400 block text-[9px]">نص التكريم:</span>
+                                      <strong className="text-amber-300 font-mono text-xs">{aiLayoutResult.elementFontSizes.appreciationText}px</strong>
+                                    </div>
+                                    <div className="p-1.5 bg-slate-900/90 rounded border border-slate-700 text-center">
+                                      <span className="text-slate-400 block text-[9px]">الهامش الآمن:</span>
+                                      <strong className="text-amber-300 font-mono text-xs">{aiLayoutResult.margins.canvasMarginTop}px</strong>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* SUB-OPTION 3: Custom Layout Editor & Validator Panel */}
+                    {(() => {
+                      const isCustomActive = certificateData.layoutPreset === 'custom-grid';
+                      const currentAreas = certificateData.customGridTemplateAreas || '"header header"\n"title title"\n"body body"\n"stamps signatures"';
+                      const validation = validateGridTemplateAreas(currentAreas);
+
+                      const handleApplySnippet = (snippet: typeof CUSTOM_GRID_SNIPPETS[0]) => {
+                        onChange({
+                          ...certificateData,
+                          layoutPreset: 'custom-grid',
+                          customGridTemplateAreas: snippet.areas,
+                          customGridTemplateColumns: snippet.columns,
+                          customGridTemplateRows: snippet.rows
+                        });
+                      };
+
+                      const handleFormatCode = () => {
+                        if (validation.isValid && validation.formattedCss) {
+                          onChange({
+                            ...certificateData,
+                            layoutPreset: 'custom-grid',
+                            customGridTemplateAreas: validation.formattedCss
+                          });
+                        }
+                      };
+
+                      return (
+                        <div className={`rounded-xl border transition-all duration-300 overflow-hidden ${
+                          isCustomActive
+                            ? 'bg-slate-900 text-slate-100 border-amber-500/80 shadow-md ring-1 ring-amber-500/40'
+                            : 'bg-white text-slate-900 border-slate-200 hover:border-slate-300'
+                        }`}>
+                          <div
+                            onClick={() => setIsCustomGridEditorSubOpen(!isCustomGridEditorSubOpen)}
+                            className={`p-3 transition cursor-pointer flex flex-wrap items-center justify-between gap-2 select-none border-b ${
+                              isCustomActive 
+                                ? 'bg-slate-950/70 hover:bg-slate-950 border-slate-800' 
+                                : 'bg-slate-50/70 hover:bg-slate-100/70 border-slate-100'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <div className="w-7 h-7 rounded-lg bg-amber-500 text-slate-950 flex items-center justify-center font-bold">
+                                <Code className="w-3.5 h-3.5" />
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <h5 className={`text-xs font-black font-['Cairo'] ${isCustomActive ? 'text-white' : 'text-slate-900'}`}>
+                                    محرر وتخصيص شبكة الـ CSS Grid المتقدم (Custom Grid)
+                                  </h5>
+                                  {isCustomActive && (
+                                    <span className="text-[9px] bg-amber-500 text-slate-950 font-black px-1.5 py-0.2 rounded">
+                                      مفعّل حالياً
+                                    </span>
+                                  )}
+                                </div>
+                                <p className={`text-[10px] ${isCustomActive ? 'text-slate-400' : 'text-slate-500'}`}>
+                                  اكتب صفوف الـ Grid بدقة لتوزيع عناصر الشهادة بحرية تامة مع فحص فوري للسلامة
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              {validation.isValid ? (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center gap-1">
+                                  <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                                  <span>بنية صالحة ({validation.rowCount}×{validation.colCount})</span>
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-rose-500/20 text-rose-300 border border-rose-500/40 flex items-center gap-1">
+                                  <AlertTriangle className="w-3 h-3 text-rose-400" />
+                                  <span>تنبيه في البنية</span>
+                                </span>
+                              )}
+                              <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${isCustomActive ? 'text-slate-300' : 'text-slate-600'} ${isCustomGridEditorSubOpen ? 'rotate-180' : ''}`} />
+                            </div>
+                          </div>
+
+                          {isCustomGridEditorSubOpen && (
+                            <div className="p-3.5 space-y-3">
+                              {/* Status bar & activation */}
+                              <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-700/30">
+                                <span className={`text-[10px] font-bold ${isCustomActive ? 'text-slate-300' : 'text-slate-600'}`}>
+                                  {isCustomActive ? 'التحكم المخصص مفعل على المعاينة الحية' : 'يمكنك تفعيل هذا المحرر للتحكم الكامل بأماكن الحقول'}
+                                </span>
+
+                                {!isCustomActive && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      onChange({
+                                        ...certificateData,
+                                        layoutPreset: 'custom-grid',
+                                        customGridTemplateAreas: currentAreas
+                                      });
+                                    }}
+                                    className="text-[10px] bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-2.5 py-1 rounded-lg transition cursor-pointer shadow-xs"
+                                  >
+                                    تفعيل هذا التخطيط المخصص
+                                  </button>
+                                )}
+                              </div>
+
+                              {/* Quick Preset Snippets & AI Grid Generator */}
+                              <div className="space-y-1.5">
+                                <div className="flex flex-wrap items-center justify-between text-[10px] font-bold text-slate-400 gap-1">
+                                  <span>نماذج جاهزة للبدء السريع أو توليد مخصص:</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOptimizeLayoutAi('custom-grid')}
+                                    disabled={isAiOptimizingLayout}
+                                    className="px-2 py-0.5 bg-gradient-to-r from-amber-500 to-yellow-400 hover:from-amber-400 hover:to-yellow-300 text-slate-950 font-black rounded-md flex items-center gap-1 cursor-pointer transition shadow-2xs text-[9.5px] disabled:opacity-50"
+                                  >
+                                    <Sparkles className="w-3 h-3" />
+                                    <span>توليد شبكة مخصصة بالذكاء الاصطناعي</span>
+                                  </button>
+                                </div>
+                                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-1.5">
+                                  {CUSTOM_GRID_SNIPPETS.map((snip) => (
+                                    <button
+                                      key={snip.id}
+                                      type="button"
+                                      onClick={() => handleApplySnippet(snip)}
+                                      className={`p-1.5 rounded-lg border text-right transition cursor-pointer text-[10px] ${
+                                        isCustomActive 
+                                          ? 'border-slate-700 bg-slate-800/80 hover:bg-amber-500/20 hover:border-amber-400' 
+                                          : 'border-slate-200 bg-slate-50 hover:bg-amber-50 hover:border-amber-300'
+                                      }`}
+                                    >
+                                      <span className="font-bold text-amber-400 block truncate">{snip.name}</span>
+                                      <span className="text-[9px] text-slate-400 block truncate">{snip.badge}</span>
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+
+                              {/* Allowed Area Tokens Bar */}
+                              <div className={`p-2 rounded-lg border space-y-1.5 ${
+                                isCustomActive ? 'bg-slate-800/70 border-slate-700' : 'bg-slate-50 border-slate-200'
+                              }`}>
+                                <div className="flex items-center justify-between text-[10px] font-bold text-slate-400">
+                                  <span className="flex items-center gap-1">
+                                    <Wrench className="w-3 h-3 text-amber-400" />
+                                    <span>المناطق المعتمدة للشهادة (انقر لإدراج الرمز):</span>
+                                  </span>
+                                  <span className="text-[9px] font-mono">header | title | body | stamps | signatures | .</span>
+                                </div>
+                                <div className="flex flex-wrap gap-1">
+                                  {CERTIFICATE_GRID_AREAS.map((area) => {
+                                    const isPresent = validation.presentAreas.includes(area.id);
+                                    return (
+                                      <button
+                                        key={area.id}
+                                        type="button"
+                                        onClick={() => {
+                                          const newAreas = currentAreas.trim() + ` "${area.id}"`;
+                                          onChange({
+                                            ...certificateData,
+                                            layoutPreset: 'custom-grid',
+                                            customGridTemplateAreas: newAreas
+                                          });
+                                        }}
+                                        className={`px-2 py-1 rounded-md text-[10px] font-bold border transition flex items-center gap-1 cursor-pointer ${
+                                          isPresent
+                                            ? 'bg-slate-700 text-slate-100 border-slate-600 hover:border-amber-400'
+                                            : 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
+                                        }`}
+                                        title={area.descAr}
+                                      >
+                                        <span>{area.icon}</span>
+                                        <span>{area.id}</span>
+                                        <span className="text-[9px] opacity-75">({area.nameAr})</span>
+                                        {isPresent ? (
+                                          <span className="text-[8px] text-emerald-400 font-bold">✓</span>
+                                        ) : (
+                                          <span className="text-[8px] text-amber-400 font-bold">+</span>
+                                        )}
+                                      </button>
+                                    );
+                                  })}
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const newAreas = currentAreas.trim() + ' "."';
+                                      onChange({
+                                        ...certificateData,
+                                        layoutPreset: 'custom-grid',
+                                        customGridTemplateAreas: newAreas
+                                      });
+                                    }}
+                                    className="px-2 py-1 rounded-md text-[10px] font-bold bg-slate-700 text-slate-300 border border-slate-600 hover:border-amber-400 transition cursor-pointer"
+                                    title="خلية فارغة في الشبكة"
+                                  >
+                                    <span>. (فارغ)</span>
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Interactive Editor & Live Visualizer */}
+                              <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
+                                <div className="space-y-1.5">
+                                  <div className="flex items-center justify-between text-[10px] font-bold text-slate-400">
+                                    <label htmlFor="custom-grid-textarea" className="flex items-center gap-1">
+                                      <span>صياغة الـ CSS Grid Template Areas:</span>
+                                    </label>
+                                    <div className="flex items-center gap-1.5">
+                                      {validation.isValid && (
+                                        <button
+                                          type="button"
+                                          onClick={handleFormatCode}
+                                          className="text-[9px] text-amber-400 hover:text-amber-300 underline cursor-pointer"
+                                        >
+                                          تنسيق الكود
+                                        </button>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          onChange({
+                                            ...certificateData,
+                                            layoutPreset: 'custom-grid',
+                                            customGridTemplateAreas: '"header header"\n"title title"\n"body body"\n"stamps signatures"',
+                                            customGridTemplateColumns: '1fr 1fr',
+                                            customGridTemplateRows: 'auto auto 1fr auto'
+                                          });
+                                        }}
+                                        className="text-[9px] text-slate-400 hover:text-slate-200 cursor-pointer"
+                                      >
+                                        إعادة ضبط
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  <textarea
+                                    id="custom-grid-textarea"
+                                    rows={4}
+                                    value={currentAreas}
+                                    onChange={(e) => {
+                                      onChange({
+                                        ...certificateData,
+                                        layoutPreset: 'custom-grid',
+                                        customGridTemplateAreas: e.target.value
+                                      });
+                                    }}
+                                    placeholder={`"header header"\n"title title"\n"body stamps"\n"signatures signatures"`}
+                                    className="w-full p-2.5 font-mono text-xs rounded-lg bg-slate-950 border border-slate-700 text-amber-200 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none leading-relaxed transition resize-y"
+                                    dir="ltr"
+                                    spellCheck={false}
+                                  />
+                                </div>
+
+                                <div className="space-y-1.5 flex flex-col">
+                                  <div className="flex items-center justify-between text-[10px] font-bold text-slate-400">
+                                    <span>المعاينة الهيكلية اللحظية للشبكة:</span>
+                                    <span className="text-[9px]">
+                                      {validation.rowCount} صفوف × {validation.colCount} أعمدة
+                                    </span>
+                                  </div>
+
+                                  <div className="grow min-h-[95px] p-2 rounded-lg bg-slate-950 border border-slate-800 flex flex-col justify-center">
+                                    {validation.matrix.length > 0 ? (
+                                      <div
+                                        className="grid gap-1 w-full h-full max-h-[140px] text-center"
+                                        style={{
+                                          gridTemplateRows: `repeat(${validation.rowCount}, minmax(0, 1fr))`,
+                                          gridTemplateColumns: `repeat(${validation.colCount}, minmax(0, 1fr))`
+                                        }}
+                                      >
+                                        {validation.matrix.map((row, rIdx) =>
+                                          row.map((cell, cIdx) => {
+                                            const areaDef = CERTIFICATE_GRID_AREAS.find((a) => a.id === cell);
+                                            const cellBg =
+                                              cell === 'header' ? 'bg-amber-500/30 text-amber-200 border-amber-500/50' :
+                                              cell === 'title' ? 'bg-sky-500/30 text-sky-200 border-sky-500/50' :
+                                              cell === 'body' ? 'bg-emerald-500/30 text-emerald-200 border-emerald-500/50' :
+                                              cell === 'stamps' ? 'bg-violet-500/30 text-violet-200 border-violet-500/50' :
+                                              cell === 'signatures' ? 'bg-slate-700 text-slate-200 border-slate-600' :
+                                              'bg-slate-900 text-slate-500 border-slate-800';
+
+                                            return (
+                                              <div
+                                                key={`cell-${rIdx}-${cIdx}`}
+                                                className={`p-1 rounded text-[9px] font-mono font-bold border flex items-center justify-center truncate ${cellBg}`}
+                                                title={`الصف ${rIdx + 1}، العمود ${cIdx + 1}: ${cell}`}
+                                              >
+                                                {areaDef ? `${areaDef.icon} ${cell}` : cell}
+                                              </div>
+                                            );
+                                          })
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <div className="text-center text-slate-500 text-[10px] py-4">
+                                        اكتب صياغة الشبكة لعرض المخطط هنا
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Validation Warnings & Feedback */}
+                              {!validation.isValid && validation.error && (
+                                <div className="p-2.5 rounded-lg bg-rose-950/80 border border-rose-700/80 text-rose-200 text-[11px] flex items-start gap-2">
+                                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                                  <div>
+                                    <span className="font-bold block">خطأ في بنية الـ Grid:</span>
+                                    <p className="mt-0.5 leading-relaxed">{validation.error}</p>
+                                  </div>
+                                </div>
+                              )}
+
+                              {validation.warnings.length > 0 && (
+                                <div className="p-2 rounded-lg bg-amber-950/60 border border-amber-600/60 text-amber-200 text-[10px] space-y-0.5">
+                                  {validation.warnings.map((w, idx) => (
+                                    <div key={idx} className="flex items-center gap-1.5">
+                                      <Info className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                                      <span>{w}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Advanced Column & Row Settings */}
+                              <div className="pt-2 border-t border-slate-700/40 grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10px]">
+                                <div>
+                                  <label htmlFor="custom-grid-cols" className={`block font-bold mb-1 ${isCustomActive ? 'text-slate-400' : 'text-slate-600'}`}>
+                                    تحديد الأعمدة (grid-template-columns):
+                                  </label>
+                                  <input
+                                    id="custom-grid-cols"
+                                    type="text"
+                                    value={certificateData.customGridTemplateColumns || ''}
+                                    onChange={(e) => updateField('customGridTemplateColumns', e.target.value)}
+                                    placeholder={validation.colCount > 1 ? `repeat(${validation.colCount}, 1fr)` : '100%'}
+                                    className="w-full px-2 py-1 rounded bg-slate-950 border border-slate-700 text-slate-200 font-mono text-xs focus:ring-1 focus:ring-amber-500 outline-none"
+                                    dir="ltr"
+                                  />
+                                </div>
+                                <div>
+                                  <label htmlFor="custom-grid-rows" className={`block font-bold mb-1 ${isCustomActive ? 'text-slate-400' : 'text-slate-600'}`}>
+                                    تحديد الصفوف (grid-template-rows):
+                                  </label>
+                                  <input
+                                    id="custom-grid-rows"
+                                    type="text"
+                                    value={certificateData.customGridTemplateRows || ''}
+                                    onChange={(e) => updateField('customGridTemplateRows', e.target.value)}
+                                    placeholder={validation.rowCount > 0 ? `repeat(${validation.rowCount}, auto)` : 'auto auto 1fr auto'}
+                                    className="w-full px-2 py-1 rounded bg-slate-950 border border-slate-700 text-slate-200 font-mono text-xs focus:ring-1 focus:ring-amber-500 outline-none"
+                                    dir="ltr"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    {/* SUB-OPTION 4: Safe Margins & Spacing Controls */}
+                    <div className="bg-white/95 rounded-xl border border-amber-200/90 shadow-2xs overflow-hidden">
+                      <div
+                        onClick={() => setIsSafeMarginsSpacingSubOpen(!isSafeMarginsSpacingSubOpen)}
+                        className="p-3 bg-gradient-to-r from-amber-50/70 to-slate-50/50 hover:bg-amber-100/50 transition cursor-pointer flex flex-wrap items-center justify-between gap-2 select-none border-b border-slate-100"
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="w-7 h-7 rounded-lg bg-amber-500 text-slate-950 flex items-center justify-center font-bold">
+                            <SlidersHorizontal className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h5 className="text-xs font-black text-slate-900 font-['Cairo']">
+                                الهوامش الآمنة وأبعاد التباعد الهندسي (Safe Margins & Spacings)
+                              </h5>
+                              <span className="text-[9px] bg-slate-100 text-slate-700 font-bold px-1.5 py-0.2 rounded border border-slate-300">
+                                هوامش حرة
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-slate-500">
+                              ضبط المسافات بين محتوى الشهادة وإطار الزخرفة الخارجي مع حساب تلقائي موصى به
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-slate-600 font-mono font-bold bg-slate-100 px-2 py-0.5 rounded">
+                            {certificateData.canvasMarginTop ?? 24}px / {certificateData.canvasMarginLeft ?? 32}px
+                          </span>
+                          <ChevronDown className={`w-4 h-4 text-slate-600 transition-transform duration-200 ${isSafeMarginsSpacingSubOpen ? 'rotate-180' : ''}`} />
+                        </div>
+                      </div>
+
+                      {isSafeMarginsSpacingSubOpen && (
+                        <div className="p-3.5 space-y-3">
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                            <div>
+                              <div className="flex justify-between items-center mb-0.5">
+                                <span className="text-[10px] font-bold text-slate-700">الهامش العلوي:</span>
+                                <span className="text-[10px] font-mono text-amber-800 font-bold">{certificateData.canvasMarginTop ?? 24}px</span>
+                              </div>
+                              <input
+                                type="range"
+                                min="0"
+                                max="60"
+                                step="2"
+                                value={certificateData.canvasMarginTop ?? 24}
+                                onChange={(e) => updateField('canvasMarginTop', parseInt(e.target.value))}
+                                className="w-full accent-amber-600 h-1.5"
+                              />
+                            </div>
+
+                            <div>
+                              <div className="flex justify-between items-center mb-0.5">
+                                <span className="text-[10px] font-bold text-slate-700">الهامش السفلي:</span>
+                                <span className="text-[10px] font-mono text-amber-800 font-bold">{certificateData.canvasMarginBottom ?? 24}px</span>
+                              </div>
+                              <input
+                                type="range"
+                                min="0"
+                                max="60"
+                                step="2"
+                                value={certificateData.canvasMarginBottom ?? 24}
+                                onChange={(e) => updateField('canvasMarginBottom', parseInt(e.target.value))}
+                                className="w-full accent-amber-600 h-1.5"
+                              />
+                            </div>
+
+                            <div>
+                              <div className="flex justify-between items-center mb-0.5">
+                                <span className="text-[10px] font-bold text-slate-700">الهامش الأيمن:</span>
+                                <span className="text-[10px] font-mono text-amber-800 font-bold">{certificateData.canvasMarginRight ?? 32}px</span>
+                              </div>
+                              <input
+                                type="range"
+                                min="0"
+                                max="80"
+                                step="2"
+                                value={certificateData.canvasMarginRight ?? 32}
+                                onChange={(e) => updateField('canvasMarginRight', parseInt(e.target.value))}
+                                className="w-full accent-amber-600 h-1.5"
+                              />
+                            </div>
+
+                            <div>
+                              <div className="flex justify-between items-center mb-0.5">
+                                <span className="text-[10px] font-bold text-slate-700">الهامش الأيسر:</span>
+                                <span className="text-[10px] font-mono text-amber-800 font-bold">{certificateData.canvasMarginLeft ?? 32}px</span>
+                              </div>
+                              <input
+                                type="range"
+                                min="0"
+                                max="80"
+                                step="2"
+                                value={certificateData.canvasMarginLeft ?? 32}
+                                onChange={(e) => updateField('canvasMarginLeft', parseInt(e.target.value))}
+                                className="w-full accent-amber-600 h-1.5"
+                              />
+                            </div>
+                          </div>
+
+                          {/* Action Buttons for Margins */}
+                          <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
+                            <button
+                              type="button"
+                              onClick={handleAutoSafeMargins}
+                              className="px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-950 font-bold text-xs rounded-lg transition flex items-center gap-1 cursor-pointer"
+                            >
+                              <Wand2 className="w-3.5 h-3.5 text-amber-700" />
+                              <span>حساب الهوامش الآمنة تلقائياً</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={handleSaveDefaultMargins}
+                              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-lg transition flex items-center gap-1 cursor-pointer"
+                            >
+                              <Save className="w-3.5 h-3.5 text-slate-600" />
+                              <span>حفظ كافتراضي</span>
+                            </button>
+
+                            {marginNotice && (
+                              <span className="text-[11px] text-amber-800 font-bold animate-fade-in ms-auto">
+                                {marginNotice}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                  </div>
+                )}
+              </div>
+
+              {/* FRAME 2: EXPANDABLE PRESET TEMPLATES FRAME */}
+              <div className="bg-gradient-to-br from-indigo-50/80 via-white to-slate-50 rounded-2xl border-2 border-indigo-200/90 shadow-xs overflow-hidden transition-all">
+                
+                {/* Main Collapsible Header for Choosing Templates */}
+                <div
+                  onClick={() => setIsPresetTemplatesSectionOpen(!isPresetTemplatesSectionOpen)}
+                  className="p-4 bg-gradient-to-r from-indigo-100/90 via-indigo-50/80 to-purple-100/70 hover:from-indigo-200/80 hover:to-purple-200/60 transition cursor-pointer flex flex-wrap items-center justify-between gap-2.5 select-none border-b border-indigo-200/70"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-black shadow-xs">
+                      <Award className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-sm font-black text-slate-900 font-['Cairo']">
+                          قوالب الشهادات الجاهزة (20+ قالب تصميمي متميز)
+                        </h4>
+                        <span className="text-[10px] bg-indigo-200 text-indigo-950 font-black px-2 py-0.5 rounded-full border border-indigo-400/80 shadow-2xs">
+                          {TEMPLATE_PRESETS.length} قوالب احترافية
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-600 mt-0.5">
+                        اختر قالباً جاهزاً بضغطة زر مع الحفاظ التام على بياناتك ونصوصك وتخصيصاتك
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsGalleryModalOpen(true);
+                      }}
+                      className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-indigo-100 hover:bg-indigo-200 text-indigo-900 font-bold text-xs rounded-xl border border-indigo-300 transition cursor-pointer"
+                    >
+                      <LayoutGrid className="w-3.5 h-3.5" />
+                      <span>المعرض المكبر</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsPresetTemplatesSectionOpen(!isPresetTemplatesSectionOpen);
+                      }}
+                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <span>{isPresetTemplatesSectionOpen ? 'طي القوالب' : 'توسيع واختيار القالب'}</span>
+                      <ChevronDown className={`w-4 h-4 transition-transform duration-300 ${isPresetTemplatesSectionOpen ? 'rotate-180' : ''}`} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Templates Selector Body (When Frame is Expanded) */}
+                {isPresetTemplatesSectionOpen && (
+                  <div className="p-4 space-y-4 animate-fade-in">
+                    
+                    {/* Gallery Banner Card */}
+                    <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 p-3.5 rounded-2xl text-white flex flex-col sm:flex-row items-center justify-between gap-3 shadow-md border border-slate-800">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-amber-500 text-slate-950 font-black flex items-center justify-center shrink-0 shadow-lg">
+                          <LayoutGrid className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h5 className="font-extrabold text-xs sm:text-sm text-amber-400 font-['Cairo']">
+                            معرض شبكة القوالب التفاعلية (Full Grid Gallery)
+                          </h5>
+                          <p className="text-[11px] text-slate-300">
+                            استعرض كافة القوالب في شبكة تكبير متكاملة مع تصنيف الفئات والبحث السريع
+                          </p>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setIsGalleryModalOpen(true)}
+                        className="w-full sm:w-auto px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-md transition flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+                      >
+                        <Sparkles className="w-4 h-4" />
+                        فتح المعرض الشامل
+                      </button>
+                    </div>
+
+                    {/* Category Filter Pills */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-700">تصفية القوالب حسب المجال:</span>
+                        <span className="text-[11px] text-slate-500">
+                          عرض {filteredTemplates.length} من أصل {TEMPLATE_PRESETS.length}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {templateCategories.map((cat) => (
+                          <button
+                            key={cat}
+                            type="button"
+                            onClick={() => setSelectedTemplateCategory(cat)}
+                            className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                              selectedTemplateCategory === cat
+                                ? 'bg-indigo-600 text-white shadow-xs'
+                                : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200'
+                            }`}
+                          >
+                            {cat}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Grid of Mini Certificate Cards */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                      {filteredTemplates.map((tmpl) => {
+                        const d = tmpl.defaultData;
+                        return (
+                          <div
+                            key={tmpl.id}
+                            onClick={() => applyPresetTemplate(tmpl.id)}
+                            className="p-2.5 rounded-2xl border border-slate-200 hover:border-indigo-500 cursor-pointer transition-all shadow-2xs hover:shadow-md group relative bg-white flex flex-col justify-between"
+                          >
+                            {/* Mini Certificate Box */}
+                            <div
+                              className="w-full aspect-[1.5] rounded-xl shadow-2xs relative overflow-hidden flex flex-col justify-between p-2.5 border transition-transform group-hover:scale-[1.01]"
+                              style={{
+                                backgroundColor: d.backgroundColor || '#ffffff',
+                                color: d.textColor || '#0f172a',
+                                borderColor: d.primaryColor,
+                                borderWidth: '2px',
+                                borderStyle: 'double',
+                              }}
+                            >
+                              <div className="text-center space-y-0.5">
+                                <span className="text-[8px] font-bold block opacity-75" style={{ color: d.secondaryColor || d.primaryColor }}>
+                                  {d.schoolName}
+                                </span>
+                                <h6 className="text-[10px] font-black leading-tight line-clamp-1" style={{ color: d.primaryColor }}>
+                                  {d.title}
+                                </h6>
+                              </div>
+
+                              <div className="my-1 text-center py-1 px-1.5 bg-white/80 rounded border border-black/5">
+                                <span className="text-[7px] block opacity-70">طالب التكريم:</span>
+                                <span className="text-[10px] font-black block line-clamp-1" style={{ color: d.primaryColor }}>
+                                  {d.studentName}
+                                </span>
+                              </div>
+
+                              <div className="flex items-center justify-between text-[7px] opacity-80 pt-1 border-t border-black/10">
+                                <span className="font-bold" style={{ color: d.primaryColor }}>{d.badgeTitle || 'وسام التميز'}</span>
+                                <span>{tmpl.category}</span>
+                              </div>
+                            </div>
+
+                            {/* Card Title & Desc */}
+                            <div className="mt-2.5 px-1 flex items-center justify-between">
+                              <div>
+                                <h5 className="font-extrabold text-xs text-slate-800 group-hover:text-indigo-700 transition">
+                                  {tmpl.name}
+                                </h5>
+                                <p className="text-[10px] text-slate-500 line-clamp-1 mt-0.5">{tmpl.description}</p>
+                              </div>
+
+                              <span className="text-[10px] bg-slate-100 group-hover:bg-indigo-100 text-slate-700 group-hover:text-indigo-900 font-bold px-2 py-1 rounded-lg shrink-0 transition">
+                                تطبيق
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* FRAME 3: SAVED DRAFTS & CUSTOM TEMPLATES IN SYSTEM */}
+              <div className="bg-gradient-to-br from-amber-50/90 via-white to-amber-100/40 rounded-2xl border-2 border-amber-300/80 shadow-xs overflow-hidden transition-all">
+                
+                {/* Main Collapsible Header */}
+                <div
+                  onClick={() => setIsSavedDraftsSectionOpen(!isSavedDraftsSectionOpen)}
+                  className="p-4 bg-gradient-to-r from-amber-100/90 via-amber-50/80 to-orange-100/70 hover:from-amber-200/80 hover:to-orange-200/60 transition cursor-pointer flex flex-wrap items-center justify-between gap-2.5 select-none border-b border-amber-200/70"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-black shadow-xs">
+                      <FolderHeart className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-sm font-black text-slate-900 font-['Cairo']">
+                          المسودات والقوالب الخاصة بك المحفوظة بالنظام
+                        </h4>
+                        <span className="text-[10px] bg-amber-200 text-amber-950 font-black px-2 py-0.5 rounded-full border border-amber-400/80 shadow-2xs">
+                          {savedDraftsList.length} عنصر محفوظ
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-600 mt-0.5">
+                        حفظ واسترجاع مسوداتك وقوالبك المخصصة للعودة إليها وتعديلها في أي وقت
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {onOpenDraftsModal && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenDraftsModal();
+                        }}
+                        className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-white/90 hover:bg-white text-slate-900 font-bold text-xs rounded-xl border border-amber-300 shadow-2xs transition cursor-pointer"
+                      >
+                        <Layers className="w-3.5 h-3.5 text-amber-600" />
+                        <span>فتح مدير المسودات الشامل</span>
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsSavedDraftsSectionOpen(!isSavedDraftsSectionOpen);
+                      }}
+                      className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <span>{isSavedDraftsSectionOpen ? 'طي المسودات' : 'استعراض المسودات'}</span>
+                      <ChevronDown className={`w-4 h-4 transition-transform duration-300 ${isSavedDraftsSectionOpen ? 'rotate-180' : ''}`} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Body (When Expanded) */}
+                {isSavedDraftsSectionOpen && (
+                  <div className="p-4 space-y-4 animate-fade-in">
+
+                    {/* Quick Save Current Certificate Bar */}
+                    <div className="bg-slate-900 p-3.5 rounded-2xl text-white space-y-2.5 shadow-md border border-slate-800">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <BookmarkCheck className="w-4 h-4 text-amber-400" />
+                          <span className="text-xs font-bold text-slate-200">حفظ التصميم والبيانات الحالية بالنظام:</span>
+                        </div>
+                        <span className="text-[10px] text-amber-400 font-bold">
+                          المستلم: {certificateData.studentName || 'مسودة'}
+                        </span>
+                      </div>
+
+                      <div className="flex flex-col sm:flex-row items-stretch gap-2">
+                        <input
+                          type="text"
+                          value={quickDraftName}
+                          onChange={(e) => setQuickDraftName(e.target.value)}
+                          placeholder={`اسم المسودة (افتراضي: ${certificateData.title || 'شهادة'} - ${certificateData.studentName || 'مسودة'})`}
+                          className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:ring-2 focus:ring-amber-500"
+                        />
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleQuickSaveDraft('draft')}
+                            className="flex-1 sm:flex-none px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow transition flex items-center justify-center gap-1 cursor-pointer"
+                            title="حفظ الشهادة الحالية بالكامل كمسودة"
+                          >
+                            <Save className="w-3.5 h-3.5" />
+                            <span>حفظ كمسودة 💾</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleQuickSaveDraft('template')}
+                            className="flex-1 sm:flex-none px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs rounded-xl shadow transition flex items-center justify-center gap-1 cursor-pointer"
+                            title="حفظ تنسيق وألوان هذا التصميم كقالب لإعادة استخدامه"
+                          >
+                            <Sparkles className="w-3.5 h-3.5" />
+                            <span>حفظ كقالب ✨</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {draftNotice && (
+                        <div className="p-2 bg-emerald-500/20 border border-emerald-500/30 rounded-xl text-[11px] text-emerald-300 font-bold flex items-center gap-1.5 animate-fade-in">
+                          <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                          <span>{draftNotice}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Saved Drafts Carousel / Grid */}
+                    {savedDraftsList.length === 0 ? (
+                      <div className="p-6 bg-white/80 rounded-2xl border border-dashed border-amber-300 text-center space-y-2">
+                        <FolderHeart className="w-8 h-8 text-amber-500 mx-auto opacity-70" />
+                        <p className="text-xs font-bold text-slate-700">لا توجد مسودات أو قوالب مخصصة محفوظة حتى الآن</p>
+                        <p className="text-[11px] text-slate-500">
+                          انقر على زر "حفظ كمسودة" أعلاه لحفظ هذا التصميم والرجوع له لاحقاً في أي وقت.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between text-xs font-bold text-slate-700 px-1">
+                          <span>المسودات والقوالب المحفوظة مؤخراً:</span>
+                          {onOpenDraftsModal && (
+                            <button
+                              type="button"
+                              onClick={onOpenDraftsModal}
+                              className="text-amber-800 hover:text-amber-950 underline text-[11px] cursor-pointer"
+                            >
+                              إدارة الكل ({savedDraftsList.length}) ←
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-[360px] overflow-y-auto p-1">
+                          {savedDraftsList.slice(0, 6).map((draft) => (
+                            <div
+                              key={draft.id}
+                              className="p-3 bg-white rounded-xl border border-slate-200 hover:border-amber-400 hover:shadow-md transition-all flex flex-col justify-between gap-2 text-right group"
+                            >
+                              <div>
+                                <div className="flex items-center justify-between gap-1 mb-1">
+                                  <span className={`text-[9px] px-1.5 py-0.2 rounded font-bold ${
+                                    draft.type === 'template' ? 'bg-purple-100 text-purple-800' : 'bg-sky-100 text-sky-800'
+                                  }`}>
+                                    {draft.type === 'template' ? 'قالب مخصص' : 'مسودة'}
+                                  </span>
+                                  <div className="flex items-center gap-1">
+                                    <div className="w-2.5 h-2.5 rounded-full border border-black/10" style={{ backgroundColor: draft.data.primaryColor }} />
+                                    <div className="w-2.5 h-2.5 rounded-full border border-black/10" style={{ backgroundColor: draft.data.secondaryColor }} />
+                                  </div>
+                                </div>
+                                <h6 className="font-bold text-xs text-slate-900 line-clamp-1 group-hover:text-amber-700">
+                                  {draft.name}
+                                </h6>
+                                <p className="text-[10px] text-slate-500 line-clamp-1 mt-0.5">
+                                  {draft.data.studentName || 'بدون اسم'} • {draft.data.layoutPreset || 'افتراضي'}
+                                </p>
+                              </div>
+
+                              <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                                <span className="text-[9px] text-slate-400 font-mono">
+                                  {new Date(draft.updatedAt || draft.createdAt).toLocaleDateString('ar-SA')}
+                                </span>
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (window.confirm(`حذف المسودة "${draft.name}"؟`)) {
+                                        deleteSavedDraft(draft.id);
+                                      }
+                                    }}
+                                    className="p-1 text-slate-400 hover:text-rose-600 rounded transition"
+                                    title="حذف"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      onChange(draft.data);
+                                      setDraftNotice(`تم استرجاع وتطبيق "${draft.name}" بنجاح! 🚀`);
+                                      setTimeout(() => setDraftNotice(null), 3000);
+                                    }}
+                                    className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[10px] rounded-lg shadow-2xs transition cursor-pointer flex items-center gap-1"
+                                  >
+                                    <span>تطبيق</span>
+                                    <ArrowRight className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                  </div>
+                )}
+              </div>
+
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* TAB 3: STYLE, PALETTES & FONTS */}
         {activeTab === 'style' && (
@@ -3404,6 +4787,17 @@ export const EditorToolbar: React.FC<Props> = ({
               ))}
             </div>
 
+            {/* Signatures Block Position Control */}
+            <OffsetPad
+              title="كتلة التوقيعات المعتمدة"
+              subtitle="تحريك شريط التوقيعات بالكامل أفقياً ورأسياً"
+              offsetX={certificateData.signaturesBlockOffsetX || 0}
+              offsetY={certificateData.signaturesBlockOffsetY || 0}
+              onChangeX={(val) => updateField('signaturesBlockOffsetX', val)}
+              onChangeY={(val) => updateField('signaturesBlockOffsetY', val)}
+              onReset={() => onChange({ ...certificateData, signaturesBlockOffsetX: 0, signaturesBlockOffsetY: 0, updatedAt: new Date().toISOString() })}
+            />
+
           </div>
         )}
 
@@ -3549,58 +4943,22 @@ export const EditorToolbar: React.FC<Props> = ({
                   </div>
 
                   {/* 3. Logo Position & Offset Movement */}
-                  <div className="space-y-2 bg-white p-2.5 rounded-lg border border-slate-200">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1">
-                        <Move className="w-3.5 h-3.5 text-amber-600" />
-                        تحريك موقع الشعار:
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => onChange({
-                          ...certificateData,
-                          logoOffsetX: 0,
-                          logoOffsetY: 0,
-                          updatedAt: new Date().toISOString()
-                        })}
-                        className="text-[10px] text-amber-700 font-bold hover:underline"
-                      >
-                        إعادة ضبط الموقع
-                      </button>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <div className="flex justify-between text-[10px] font-bold text-slate-600 mb-1">
-                          <span>إزاحة أفقية:</span>
-                          <span className="font-mono">{certificateData.logoOffsetX || 0}px</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="-150"
-                          max="150"
-                          value={certificateData.logoOffsetX || 0}
-                          onChange={(e) => updateField('logoOffsetX', parseInt(e.target.value))}
-                          className="w-full accent-amber-600 cursor-pointer"
-                        />
-                      </div>
-
-                      <div>
-                        <div className="flex justify-between text-[10px] font-bold text-slate-600 mb-1">
-                          <span>إزاحة رأسية:</span>
-                          <span className="font-mono">{certificateData.logoOffsetY || 0}px</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="-100"
-                          max="100"
-                          value={certificateData.logoOffsetY || 0}
-                          onChange={(e) => updateField('logoOffsetY', parseInt(e.target.value))}
-                          className="w-full accent-amber-600 cursor-pointer"
-                        />
-                      </div>
-                    </div>
-                  </div>
+                  <OffsetPad
+                    title="موقع الشعار"
+                    subtitle="إزاحة الشعار أفقياً وعمودياً مع تحريك دقيق"
+                    offsetX={certificateData.logoOffsetX || 0}
+                    offsetY={certificateData.logoOffsetY || 0}
+                    min={-150}
+                    max={150}
+                    onChangeX={(val) => updateField('logoOffsetX', val)}
+                    onChangeY={(val) => updateField('logoOffsetY', val)}
+                    onReset={() => onChange({
+                      ...certificateData,
+                      logoOffsetX: 0,
+                      logoOffsetY: 0,
+                      updatedAt: new Date().toISOString()
+                    })}
+                  />
 
                   {/* 4. Shape, Background Mode & Rotation */}
                   <div className="space-y-2 bg-white p-2.5 rounded-lg border border-slate-200">
@@ -4396,150 +5754,704 @@ export const EditorToolbar: React.FC<Props> = ({
             {/* Badge / Medal Settings */}
             <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-800">تخصيص الوسام / الشارة / الميدالية</span>
+                <div className="flex items-center gap-2">
+                  <Award className="w-4 h-4 text-amber-600" />
+                  <span className="text-xs font-bold text-slate-800">تخصيص الوسام / الشارة / الميدالية</span>
+                </div>
                 <input
                   type="checkbox"
                   checked={certificateData.showBadge}
                   onChange={(e) => updateField('showBadge', e.target.checked)}
-                  className="w-4 h-4 accent-amber-500 rounded"
+                  className="w-4 h-4 accent-amber-500 rounded cursor-pointer"
                 />
               </div>
 
               {certificateData.showBadge && (
                 <div className="space-y-3 pt-1">
-                  {/* Badge Source Selector */}
-                  <div className="flex rounded-lg border border-slate-200 bg-white p-0.5 text-xs font-bold">
-                    <button
-                      onClick={() => updateField('badgeType', 'icon')}
-                      className={`flex-1 py-1.5 text-center rounded-md transition ${
-                        (certificateData.badgeType || 'icon') === 'icon'
-                          ? 'bg-amber-500 text-slate-950 shadow-xs'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      🏅 أيقونة ورمز
-                    </button>
-                    <button
-                      onClick={() => updateField('badgeType', 'upload')}
-                      className={`flex-1 py-1.5 text-center rounded-md transition ${
-                        certificateData.badgeType === 'upload'
-                          ? 'bg-amber-500 text-slate-950 shadow-xs'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      🖼️ رفع من الجهاز
-                    </button>
-                  </div>
+                  
+                  {/* --- 1. BADGE ICON & SOURCE SECTION --- */}
+                  <div className="p-2.5 bg-white rounded-lg border border-slate-200/90 space-y-2.5 shadow-2xs">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-slate-800 flex items-center gap-1.5">
+                        <span>🏅</span>
+                        <span>أيقونة وصورة الوسام العلوية</span>
+                      </span>
+                    </div>
 
-                  {/* Device Upload for Badge */}
-                  {certificateData.badgeType === 'upload' ? (
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-3">
-                        {certificateData.badgeUrl ? (
-                          <div className="relative">
-                            <img
-                              src={certificateData.badgeUrl}
-                              alt="Badge"
-                              className="w-12 h-12 object-contain bg-white rounded-lg p-1 border shadow-xs"
-                            />
-                            <button
-                              onClick={() => onChange({ ...certificateData, badgeUrl: undefined, updatedAt: new Date().toISOString() })}
-                              className="absolute -top-1 -right-1 bg-red-600 text-white rounded-full p-0.5 shadow-xs"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="w-12 h-12 rounded-lg bg-amber-50 border border-dashed border-amber-300 flex items-center justify-center text-amber-700 text-[10px] font-bold text-center">
-                            لا يوجد
-                          </div>
-                        )}
+                    {/* Badge Source Selector */}
+                    <div className="flex rounded-lg border border-slate-200 bg-slate-100 p-0.5 text-xs font-bold">
+                      <button
+                        onClick={() => updateField('badgeType', 'icon')}
+                        className={`flex-1 py-1 text-center rounded-md transition ${
+                          (certificateData.badgeType || 'icon') === 'icon'
+                            ? 'bg-amber-500 text-slate-950 shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        🏅 أيقونة مدمجة
+                      </button>
+                      <button
+                        onClick={() => updateField('badgeType', 'upload')}
+                        className={`flex-1 py-1 text-center rounded-md transition ${
+                          certificateData.badgeType === 'upload'
+                            ? 'bg-amber-500 text-slate-950 shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        🖼️ رفع من الجهاز
+                      </button>
+                    </div>
 
-                        <label className="flex-1 px-3 py-2 bg-amber-600 text-white rounded-lg text-xs font-bold hover:bg-amber-700 cursor-pointer text-center flex items-center justify-center gap-2 shadow-xs transition">
-                          <Upload className="w-4 h-4" />
-                          رفع صورة الوسام من الجهاز
-                          <input type="file" accept="image/*" onChange={handleBadgeUpload} className="hidden" />
-                        </label>
+                    {/* Device Upload for Badge */}
+                    {certificateData.badgeType === 'upload' ? (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-3">
+                          {certificateData.badgeUrl ? (
+                            <div className="relative">
+                              <img
+                                src={certificateData.badgeUrl}
+                                alt="Badge"
+                                className="w-12 h-12 object-contain bg-white rounded-lg p-1 border shadow-xs"
+                              />
+                              <button
+                                onClick={() => onChange({ ...certificateData, badgeUrl: undefined, updatedAt: new Date().toISOString() })}
+                                className="absolute -top-1 -right-1 bg-red-600 text-white rounded-full p-0.5 shadow-xs hover:bg-red-700"
+                                title="حذف صورة الوسام"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="w-12 h-12 rounded-lg bg-amber-50 border border-dashed border-amber-300 flex items-center justify-center text-amber-700 text-[10px] font-bold text-center">
+                              لا يوجد
+                            </div>
+                          )}
+
+                          <label className="flex-1 px-3 py-2 bg-amber-600 text-white rounded-lg text-xs font-bold hover:bg-amber-700 cursor-pointer text-center flex items-center justify-center gap-2 shadow-xs transition">
+                            <Upload className="w-4 h-4" />
+                            رفع صورة الوسام من الجهاز
+                            <input type="file" accept="image/*" onChange={handleBadgeUpload} className="hidden" />
+                          </label>
+                        </div>
+                      </div>
+                    ) : (
+                      /* Built-in Icons */
+                      <div className="flex flex-wrap gap-1.5">
+                        {badgeIcons.map((bi) => (
+                          <button
+                            key={bi.id}
+                            onClick={() => updateField('badgeIcon', bi.id)}
+                            className={`px-2.5 py-1 rounded-md text-[11px] font-bold border transition ${
+                              certificateData.badgeIcon === bi.id && certificateData.badgeType !== 'upload'
+                                ? 'bg-amber-500 text-slate-950 border-amber-600 shadow-2xs'
+                                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                            }`}
+                          >
+                            {bi.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Badge Size & Offset */}
+                    <div className="flex items-center justify-between pt-1 border-t border-slate-100">
+                      <span className="text-[11px] font-bold text-slate-700">حجم أيقونة الوسام:</span>
+                      <div className="flex gap-1">
+                        {[
+                          { id: 'sm', label: 'صغير' },
+                          { id: 'md', label: 'متوسط' },
+                          { id: 'lg', label: 'كبير' }
+                        ].map((sz) => (
+                          <button
+                            key={sz.id}
+                            onClick={() => updateField('badgeSize', sz.id as any)}
+                            className={`px-2.5 py-0.5 rounded text-[10px] font-bold border transition ${
+                              (certificateData.badgeSize || 'md') === sz.id
+                                ? 'bg-amber-500 text-slate-950 border-amber-600'
+                                : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                            }`}
+                          >
+                            {sz.label}
+                          </button>
+                        ))}
                       </div>
                     </div>
-                  ) : (
-                    /* Built-in Icons */
-                    <div className="flex flex-wrap gap-1.5">
-                      {badgeIcons.map((bi) => (
-                        <button
-                          key={bi.id}
-                          onClick={() => updateField('badgeIcon', bi.id)}
-                          className={`px-2.5 py-1 rounded-md text-[11px] font-bold border ${
-                            certificateData.badgeIcon === bi.id && certificateData.badgeType !== 'upload'
-                              ? 'bg-amber-500 text-slate-950 border-amber-600'
-                              : 'bg-white text-slate-700 border-slate-300'
-                          }`}
-                        >
-                          {bi.label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
 
-                  {/* Badge Title Input & Show/Hide Toggle */}
-                  <div className="space-y-1.5">
+                    <OffsetPad
+                      title="رمز / أيقونة الوسام"
+                      subtitle="تحريك أيقونة أو صورة الوسام العلوية بدقة"
+                      offsetX={certificateData.badgeBoxOffsetX || 0}
+                      offsetY={certificateData.badgeBoxOffsetY || 0}
+                      onChangeX={(val) => updateField('badgeBoxOffsetX', val)}
+                      onChangeY={(val) => updateField('badgeBoxOffsetY', val)}
+                      onReset={() => onChange({ ...certificateData, badgeBoxOffsetX: 0, badgeBoxOffsetY: 0, updatedAt: new Date().toISOString() })}
+                    />
+                  </div>
+
+                  {/* --- 2. BADGE TITLE BACKGROUND DESIGN SECTION --- */}
+                  <div className="p-2.5 bg-white rounded-lg border border-amber-200/90 space-y-2.5 shadow-2xs">
                     <div className="flex items-center justify-between">
-                      <label className="block text-[11px] font-bold text-slate-700">عنوان الوسام / الشارة:</label>
-                      <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-600 cursor-pointer">
+                      <span className="text-[11px] font-bold text-amber-900 flex items-center gap-1.5">
+                        <span>🎨</span>
+                        <span>تصميم وضبط خلفية عنوان الوسام (المربع/الحاوية)</span>
+                      </span>
+                    </div>
+
+                    {/* Background Shape */}
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-slate-600">شكل وهيكل الخلفية:</label>
+                      <div className="grid grid-cols-3 sm:grid-cols-4 gap-1 text-[10px] font-bold">
+                        {[
+                          { id: 'pill', label: 'كبسولة دائرية', icon: '💊' },
+                          { id: 'rounded', label: 'مستطيل منحني', icon: '▢' },
+                          { id: 'banner', label: 'شريط ملكي', icon: '🎗️' },
+                          { id: 'ornate', label: 'إطار زخرفي', icon: '⚜️' },
+                          { id: 'square', label: 'زوايا قائمة', icon: '⏹' },
+                          { id: 'minimal', label: 'خطي ناعم', icon: '▭' },
+                          { id: 'none', label: 'بدون خلفية', icon: '🚫' },
+                        ].map((sh) => (
+                          <button
+                            key={sh.id}
+                            type="button"
+                            onClick={() => updateField('badgeBgShape', sh.id as any)}
+                            className={`py-1 px-1.5 rounded-md border text-center transition flex items-center justify-center gap-1 ${
+                              (certificateData.badgeBgShape || 'pill') === sh.id
+                                ? 'bg-amber-500 text-slate-950 border-amber-600 shadow-2xs font-black'
+                                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                            }`}
+                          >
+                            <span>{sh.icon}</span>
+                            <span>{sh.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Background Colors & Gradient (if not 'none') */}
+                    {(certificateData.badgeBgShape || 'pill') !== 'none' && (
+                      <>
+                        <div className="space-y-1.5 pt-1 border-t border-slate-100">
+                          <div className="flex items-center justify-between">
+                            <label className="text-[10px] font-bold text-slate-700">لون الخلفية الأساسي:</label>
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="color"
+                                value={certificateData.badgeBgColor || certificateData.primaryColor || '#b45309'}
+                                onChange={(e) => updateField('badgeBgColor', e.target.value)}
+                                className="w-5 h-5 rounded cursor-pointer border border-slate-300 p-0"
+                              />
+                              <span className="text-[9px] font-mono text-slate-500">
+                                {certificateData.badgeBgColor || certificateData.primaryColor || '#b45309'}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Quick Swatches */}
+                          <div className="flex flex-wrap gap-1">
+                            {[
+                              { color: certificateData.primaryColor || '#854d0e', name: 'الأساسي' },
+                              { color: certificateData.secondaryColor || '#d97706', name: 'الثانوي' },
+                              { color: '#b45309', name: 'ذهبي برونزي' },
+                              { color: '#1e3a8a', name: 'كحلي ملكي' },
+                              { color: '#065f46', name: 'زمردي راقٍ' },
+                              { color: '#991b1b', name: 'ياقوتي ملكي' },
+                              { color: '#4c1d95', name: 'بنفسجي فاخر' },
+                              { color: '#0f172a', name: 'فحمي داكن' },
+                              { color: '#ffffff', name: 'أبيض ناصع' },
+                            ].map((sw, idx) => (
+                              <button
+                                key={idx}
+                                type="button"
+                                onClick={() => updateField('badgeBgColor', sw.color)}
+                                className={`w-5 h-5 rounded-md border transition ${
+                                  (certificateData.badgeBgColor || certificateData.primaryColor) === sw.color
+                                    ? 'ring-2 ring-amber-500 border-white scale-110'
+                                    : 'border-slate-300 hover:scale-105'
+                                }`}
+                                style={{ backgroundColor: sw.color }}
+                                title={sw.name}
+                              />
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Gradient Toggle & Secondary Color */}
+                        <div className="pt-1.5 border-t border-slate-100 space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-700 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={certificateData.badgeBgGradient ?? false}
+                                onChange={(e) => updateField('badgeBgGradient', e.target.checked)}
+                                className="w-3.5 h-3.5 accent-amber-500 rounded cursor-pointer"
+                              />
+                              <span>تفعيل تدرج لوني للخلفية (Gradient)</span>
+                            </label>
+                            {certificateData.badgeBgGradient && (
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="color"
+                                  value={certificateData.badgeBgColor2 || '#f59e0b'}
+                                  onChange={(e) => updateField('badgeBgColor2', e.target.value)}
+                                  className="w-5 h-5 rounded cursor-pointer border border-slate-300 p-0"
+                                />
+                                <span className="text-[9px] font-mono text-slate-500">
+                                  {certificateData.badgeBgColor2 || '#f59e0b'}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Background Opacity */}
+                        <div className="pt-1 border-t border-slate-100 space-y-1">
+                          <div className="flex justify-between text-[10px] font-bold text-slate-700">
+                            <span>شفافية الخلفية:</span>
+                            <span className="font-mono text-amber-700">
+                              {Math.round((certificateData.badgeBgOpacity ?? 1) * 100)}%
+                            </span>
+                          </div>
+                          <input
+                            type="range"
+                            min="0.1"
+                            max="1"
+                            step="0.05"
+                            value={certificateData.badgeBgOpacity ?? 1}
+                            onChange={(e) => updateField('badgeBgOpacity', parseFloat(e.target.value))}
+                            className="w-full accent-amber-500 cursor-pointer h-1.5"
+                          />
+                        </div>
+
+                        {/* Border Controls */}
+                        <div className="pt-1.5 border-t border-slate-100 space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-bold text-slate-700">حدود الخلفية (Border):</span>
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="color"
+                                value={certificateData.badgeBgBorderColor || '#fde68a'}
+                                onChange={(e) => updateField('badgeBgBorderColor', e.target.value)}
+                                className="w-4 h-4 rounded cursor-pointer border border-slate-300 p-0"
+                              />
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 text-[10px]">
+                            <div>
+                              <div className="flex justify-between text-slate-600 font-bold mb-0.5">
+                                <span>سُمك الحد:</span>
+                                <span className="font-mono">{certificateData.badgeBgBorderWidth ?? 0}px</span>
+                              </div>
+                              <input
+                                type="range"
+                                min="0"
+                                max="6"
+                                step="1"
+                                value={certificateData.badgeBgBorderWidth ?? 0}
+                                onChange={(e) => updateField('badgeBgBorderWidth', parseInt(e.target.value) || 0)}
+                                className="w-full accent-amber-500 cursor-pointer h-1.5"
+                              />
+                            </div>
+                            <div>
+                              <span className="block text-slate-600 font-bold mb-0.5">نمط الحد:</span>
+                              <select
+                                value={certificateData.badgeBgBorderStyle || 'solid'}
+                                onChange={(e) => updateField('badgeBgBorderStyle', e.target.value as any)}
+                                className="w-full text-[10px] py-0.5 px-1 border border-slate-300 rounded bg-white"
+                              >
+                                <option value="solid">مصمت (Solid)</option>
+                                <option value="double">مزدوج (Double)</option>
+                                <option value="dashed">متقطع (Dashed)</option>
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Dimensions & Padding */}
+                        <div className="pt-1.5 border-t border-slate-100 space-y-1.5">
+                          <span className="block text-[10px] font-bold text-slate-700">أبعاد ومسافات الخلفية:</span>
+                          
+                          {/* Width Mode */}
+                          <div className="flex rounded-md border border-slate-200 bg-slate-50 p-0.5 text-[10px] font-bold">
+                            {[
+                              { id: 'auto', label: 'ملاءمة المحتوى (Auto)' },
+                              { id: 'custom', label: 'عرض مخصص (px)' },
+                              { id: 'full', label: 'العرض الكامل' }
+                            ].map((wm) => (
+                              <button
+                                key={wm.id}
+                                type="button"
+                                onClick={() => updateField('badgeBgWidthMode', wm.id as any)}
+                                className={`flex-1 py-0.5 text-center rounded transition ${
+                                  (certificateData.badgeBgWidthMode || 'auto') === wm.id
+                                    ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
+                                    : 'text-slate-600 hover:text-slate-900'
+                                }`}
+                              >
+                                {wm.label}
+                              </button>
+                            ))}
+                          </div>
+
+                          {certificateData.badgeBgWidthMode === 'custom' && (
+                            <div className="space-y-0.5 pt-0.5">
+                              <div className="flex justify-between text-[10px] font-bold text-slate-600">
+                                <span>العرض المخصص:</span>
+                                <span className="font-mono text-amber-700">{certificateData.badgeBgWidthPx || 120}px</span>
+                              </div>
+                              <input
+                                type="range"
+                                min="60"
+                                max="280"
+                                step="5"
+                                value={certificateData.badgeBgWidthPx || 120}
+                                onChange={(e) => updateField('badgeBgWidthPx', parseInt(e.target.value) || 120)}
+                                className="w-full accent-amber-500 cursor-pointer h-1.5"
+                              />
+                            </div>
+                          )}
+
+                          {/* Padding X & Y */}
+                          <div className="grid grid-cols-2 gap-2 text-[10px]">
+                            <div>
+                              <div className="flex justify-between text-slate-600 font-bold mb-0.5">
+                                <span>حشوة أفقية (X):</span>
+                                <span className="font-mono">{certificateData.badgeBgPaddingX ?? 12}px</span>
+                              </div>
+                              <input
+                                type="range"
+                                min="2"
+                                max="32"
+                                step="1"
+                                value={certificateData.badgeBgPaddingX ?? 12}
+                                onChange={(e) => updateField('badgeBgPaddingX', parseInt(e.target.value) || 0)}
+                                className="w-full accent-amber-500 cursor-pointer h-1.5"
+                              />
+                            </div>
+                            <div>
+                              <div className="flex justify-between text-slate-600 font-bold mb-0.5">
+                                <span>حشوة رأسية (Y):</span>
+                                <span className="font-mono">{certificateData.badgeBgPaddingY ?? 3.5}px</span>
+                              </div>
+                              <input
+                                type="range"
+                                min="1"
+                                max="16"
+                                step="0.5"
+                                value={certificateData.badgeBgPaddingY ?? 3.5}
+                                onChange={(e) => updateField('badgeBgPaddingY', parseFloat(e.target.value) || 0)}
+                                className="w-full accent-amber-500 cursor-pointer h-1.5"
+                              />
+                            </div>
+                          </div>
+
+                          {/* Corner Radius (if rounded/square/ornate) */}
+                          {['rounded', 'square', 'ornate', 'banner', 'minimal'].includes(certificateData.badgeBgShape || 'pill') && (
+                            <div className="space-y-0.5 pt-0.5">
+                              <div className="flex justify-between text-[10px] font-bold text-slate-600">
+                                <span>استدارة الحواف (Radius):</span>
+                                <span className="font-mono text-amber-700">{certificateData.badgeBgRadius ?? 8}px</span>
+                              </div>
+                              <input
+                                type="range"
+                                min="0"
+                                max="32"
+                                step="1"
+                                value={certificateData.badgeBgRadius ?? 8}
+                                onChange={(e) => updateField('badgeBgRadius', parseInt(e.target.value) || 0)}
+                                className="w-full accent-amber-500 cursor-pointer h-1.5"
+                              />
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Shadows & Glow Presets */}
+                        <div className="pt-1.5 border-t border-slate-100 space-y-1">
+                          <label className="block text-[10px] font-bold text-slate-700">تأثير الظل والتوهج (Shadow):</label>
+                          <div className="grid grid-cols-3 gap-1 text-[10px] font-bold">
+                            {[
+                              { id: 'none', label: 'بدون ظل' },
+                              { id: 'sm', label: 'ظل ناعم' },
+                              { id: 'md', label: 'ظل متوسط' },
+                              { id: 'lg', label: 'ظل بارز' },
+                              { id: 'glow', label: 'توهج دافئ' },
+                              { id: 'gold-glow', label: 'وهج ذهبي فاخر' },
+                            ].map((sh) => (
+                              <button
+                                key={sh.id}
+                                type="button"
+                                onClick={() => updateField('badgeBgShadow', sh.id as any)}
+                                className={`py-1 px-1 rounded border text-center transition ${
+                                  (certificateData.badgeBgShadow || 'sm') === sh.id
+                                    ? 'bg-amber-500 text-slate-950 border-amber-600 font-black shadow-xs'
+                                    : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                                }`}
+                              >
+                                {sh.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    {/* Independent Background Position Offset */}
+                    <OffsetPad
+                      title="خلفية ومربع عنوان الوسام"
+                      subtitle="تحريك حاوية وخلفية الوسام بشكل مستقل"
+                      offsetX={certificateData.badgeBgOffsetX || 0}
+                      offsetY={certificateData.badgeBgOffsetY || 0}
+                      onChangeX={(val) => updateField('badgeBgOffsetX', val)}
+                      onChangeY={(val) => updateField('badgeBgOffsetY', val)}
+                      onReset={() => onChange({ ...certificateData, badgeBgOffsetX: 0, badgeBgOffsetY: 0, updatedAt: new Date().toISOString() })}
+                    />
+                  </div>
+
+                  {/* --- 3. BADGE TITLE TEXT & TYPOGRAPHY SECTION --- */}
+                  <div className="p-2.5 bg-white rounded-lg border border-slate-200/90 space-y-2.5 shadow-2xs">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-slate-800 flex items-center gap-1.5">
+                        <span>✍️</span>
+                        <span>تصميم وضبط نص واسم الوسام ومحاذاته</span>
+                      </span>
+                      <label className="flex items-center gap-1 text-[10px] font-bold text-slate-600 cursor-pointer">
                         <input
                           type="checkbox"
                           checked={certificateData.showBadgeTitle ?? true}
                           onChange={(e) => updateField('showBadgeTitle', e.target.checked)}
                           className="w-3.5 h-3.5 accent-amber-500 rounded cursor-pointer"
                         />
-                        <span>إظهار نص العنوان</span>
+                        <span>إظهار النص</span>
                       </label>
                     </div>
+
                     {(certificateData.showBadgeTitle ?? true) && (
-                      <input
-                        type="text"
-                        value={certificateData.badgeTitle}
-                        onChange={(e) => updateField('badgeTitle', e.target.value)}
-                        placeholder="عنوان الشارة (مثال: وسام التميز الأول)"
-                        className="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg bg-white"
-                      />
+                      <div className="space-y-2.5">
+                        {/* Text Input */}
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-600 mb-1">عبارة عنوان الوسام:</label>
+                          <input
+                            type="text"
+                            value={certificateData.badgeTitle}
+                            onChange={(e) => updateField('badgeTitle', e.target.value)}
+                            placeholder="عنوان الوسام (مثال: وسام التميز والتفوق)"
+                            className="w-full px-2.5 py-1 text-xs border border-slate-300 rounded-lg bg-white focus:ring-1 focus:ring-amber-500 font-bold"
+                          />
+                        </div>
+
+                        {/* Font Size & Quick Size Buttons */}
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[10px] font-bold text-slate-700">
+                            <span>حجم الخط:</span>
+                            <span className="font-mono text-amber-700">{certificateData.badgeTextFontSize || 10}px</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="7"
+                            max="24"
+                            step="1"
+                            value={certificateData.badgeTextFontSize || 10}
+                            onChange={(e) => updateField('badgeTextFontSize', parseInt(e.target.value) || 10)}
+                            className="w-full accent-amber-500 cursor-pointer h-1.5"
+                          />
+                          <div className="flex gap-1 pt-0.5">
+                            {[8, 9, 10, 11, 12, 14, 16].map((sz) => (
+                              <button
+                                key={sz}
+                                type="button"
+                                onClick={() => updateField('badgeTextFontSize', sz)}
+                                className={`flex-1 py-0.5 text-[9px] font-mono rounded border ${
+                                  (certificateData.badgeTextFontSize || 10) === sz
+                                    ? 'bg-amber-500 text-slate-950 font-bold border-amber-600'
+                                    : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                                }`}
+                              >
+                                {sz}px
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Font Family & Weight */}
+                        <div className="grid grid-cols-2 gap-2 text-[10px]">
+                          <div>
+                            <span className="block text-slate-600 font-bold mb-0.5">نوع الخط العربي:</span>
+                            <select
+                              value={certificateData.badgeTextFontFamily || certificateData.fontFamily || 'Cairo'}
+                              onChange={(e) => updateField('badgeTextFontFamily', e.target.value as FontOption)}
+                              className="w-full text-[10px] py-1 px-1.5 border border-slate-300 rounded bg-white font-bold"
+                            >
+                              {fonts.map((f) => (
+                                <option key={f.id} value={f.id}>{f.label}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <span className="block text-slate-600 font-bold mb-0.5">سُمك الخط:</span>
+                            <select
+                              value={certificateData.badgeTextFontWeight || 'bold'}
+                              onChange={(e) => updateField('badgeTextFontWeight', e.target.value as any)}
+                              className="w-full text-[10px] py-1 px-1.5 border border-slate-300 rounded bg-white font-bold"
+                            >
+                              <option value="normal">عادي (Normal)</option>
+                              <option value="bold">عريض (Bold)</option>
+                              <option value="extrabold">سميك جداً (ExtraBold)</option>
+                              <option value="black">أسود عريض (Black)</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Text Color & Swatches */}
+                        <div className="space-y-1.5 pt-1 border-t border-slate-100">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-bold text-slate-700">لون النص:</span>
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="color"
+                                value={certificateData.badgeTextColor || '#ffffff'}
+                                onChange={(e) => updateField('badgeTextColor', e.target.value)}
+                                className="w-5 h-5 rounded cursor-pointer border border-slate-300 p-0"
+                              />
+                              <span className="text-[9px] font-mono text-slate-500">
+                                {certificateData.badgeTextColor || '#ffffff'}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap gap-1">
+                            {[
+                              { color: '#ffffff', name: 'أبيض ناصع' },
+                              { color: '#fef08a', name: 'ذهبي فاتح' },
+                              { color: '#fde047', name: 'أصفر زاهٍ' },
+                              { color: '#0f172a', name: 'فحمي داكن' },
+                              { color: '#1e3a8a', name: 'كحلي ياقوتي' },
+                              { color: '#15803d', name: 'أخضر زمردي' },
+                              { color: '#b45309', name: 'برونزي ذهبي' },
+                            ].map((sw, idx) => (
+                              <button
+                                key={idx}
+                                type="button"
+                                onClick={() => updateField('badgeTextColor', sw.color)}
+                                className={`w-5 h-5 rounded-md border transition ${
+                                  (certificateData.badgeTextColor || '#ffffff') === sw.color
+                                    ? 'ring-2 ring-amber-500 border-white scale-110'
+                                    : 'border-slate-300 hover:scale-105'
+                                }`}
+                                style={{ backgroundColor: sw.color }}
+                                title={sw.name}
+                              />
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Text Alignment & Letter Spacing */}
+                        <div className="grid grid-cols-2 gap-2 text-[10px] pt-1 border-t border-slate-100">
+                          <div>
+                            <span className="block text-slate-600 font-bold mb-0.5">محاذاة النص:</span>
+                            <div className="flex rounded border border-slate-200 bg-slate-50 p-0.5">
+                              {[
+                                { id: 'right', label: 'يمين' },
+                                { id: 'center', label: 'توسيط' },
+                                { id: 'left', label: 'يسار' },
+                              ].map((al) => (
+                                <button
+                                  key={al.id}
+                                  type="button"
+                                  onClick={() => updateField('badgeTextAlign', al.id as any)}
+                                  className={`flex-1 py-0.5 text-center rounded transition ${
+                                    (certificateData.badgeTextAlign || 'center') === al.id
+                                      ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
+                                      : 'text-slate-600 hover:text-slate-900'
+                                  }`}
+                                >
+                                  {al.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div>
+                            <div className="flex justify-between text-slate-600 font-bold mb-0.5">
+                              <span>تباعد الأحرف:</span>
+                              <span className="font-mono">{certificateData.badgeTextLetterSpacing || 0}px</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="-1"
+                              max="4"
+                              step="0.5"
+                              value={certificateData.badgeTextLetterSpacing || 0}
+                              onChange={(e) => updateField('badgeTextLetterSpacing', parseFloat(e.target.value) || 0)}
+                              className="w-full accent-amber-500 cursor-pointer h-1.5"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Wrap Mode & Auto-fit Bound Protection Info */}
+                        <div className="p-2 bg-amber-50/70 border border-amber-200/80 rounded-lg space-y-1.5">
+                          <div className="flex items-center justify-between text-[10px] font-bold text-amber-900">
+                            <span className="flex items-center gap-1">
+                              <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
+                              <span>ربط الاسم داخل المربع ومنع تجاوزه للحدود:</span>
+                            </span>
+                          </div>
+                          
+                          <div className="flex rounded border border-amber-300/80 bg-white p-0.5 text-[10px] font-bold">
+                            <button
+                              type="button"
+                              onClick={() => updateField('badgeTextWrap', 'nowrap')}
+                              className={`flex-1 py-1 text-center rounded transition ${
+                                (certificateData.badgeTextWrap || 'nowrap') === 'nowrap'
+                                  ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
+                                  : 'text-slate-600 hover:text-slate-900'
+                              }`}
+                            >
+                              سطر واحد (تقليص تلقائي)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => updateField('badgeTextWrap', 'wrap')}
+                              className={`flex-1 py-1 text-center rounded transition ${
+                                certificateData.badgeTextWrap === 'wrap'
+                                  ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
+                                  : 'text-slate-600 hover:text-slate-900'
+                              }`}
+                            >
+                              التواء لأسطر متعددة (Wrap)
+                            </button>
+                          </div>
+                          <p className="text-[9px] text-amber-800 leading-relaxed">
+                            ✓ يتم قفل النص بدقة داخل المربع لمنع خروجه أو تداخله عند التصدير والطباعة بجودة فائقة.
+                          </p>
+                        </div>
+
+                        {/* Fine Text Internal Position & Overall Combined Position */}
+                        <div className="space-y-1.5 pt-1 border-t border-slate-100">
+                          <OffsetPad
+                            title="النص داخل المربع (تحريك دقيق)"
+                            subtitle="ضبط إزاحة الكلمات والنصوص داخل صندوق الخلفية"
+                            offsetX={certificateData.badgeTextOffsetX || 0}
+                            offsetY={certificateData.badgeTextOffsetY || 0}
+                            onChangeX={(val) => updateField('badgeTextOffsetX', val)}
+                            onChangeY={(val) => updateField('badgeTextOffsetY', val)}
+                            onReset={() => onChange({ ...certificateData, badgeTextOffsetX: 0, badgeTextOffsetY: 0, updatedAt: new Date().toISOString() })}
+                            min={-50}
+                            max={50}
+                          />
+
+                          <OffsetPad
+                            title="الموقع الكلي لعنوان الوسام"
+                            subtitle="تحريك المربع والنص معاً كوحدة متكاملة"
+                            offsetX={certificateData.badgeTitleOffsetX || 0}
+                            offsetY={certificateData.badgeTitleOffsetY || 0}
+                            onChangeX={(val) => updateField('badgeTitleOffsetX', val)}
+                            onChangeY={(val) => updateField('badgeTitleOffsetY', val)}
+                            onReset={() => onChange({ ...certificateData, badgeTitleOffsetX: 0, badgeTitleOffsetY: 0, updatedAt: new Date().toISOString() })}
+                          />
+                        </div>
+                      </div>
                     )}
                   </div>
 
-                  {/* Badge Title Offset Controls */}
-                  <OffsetPad
-                    title="تحريك عبارة اسم الوسام"
-                    subtitle="تحريك مربع عنوان الوسام أفقياً ورأسياً"
-                    offsetX={certificateData.badgeTitleOffsetX || 0}
-                    offsetY={certificateData.badgeTitleOffsetY || 0}
-                    onChangeX={(val) => updateField('badgeTitleOffsetX', val)}
-                    onChangeY={(val) => updateField('badgeTitleOffsetY', val)}
-                    onReset={() => onChange({ ...certificateData, badgeTitleOffsetX: 0, badgeTitleOffsetY: 0, updatedAt: new Date().toISOString() })}
-                  />
-
-                  {/* Badge Size */}
-                  <div className="flex items-center justify-between pt-1">
-                    <span className="text-[11px] font-bold text-slate-700">حجم الوسام:</span>
-                    <div className="flex gap-1">
-                      {[
-                        { id: 'sm', label: 'صغير' },
-                        { id: 'md', label: 'متوسط' },
-                        { id: 'lg', label: 'كبير' }
-                      ].map((sz) => (
-                        <button
-                          key={sz.id}
-                          onClick={() => updateField('badgeSize', sz.id as any)}
-                          className={`px-2.5 py-0.5 rounded text-[10px] font-bold border ${
-                            (certificateData.badgeSize || 'md') === sz.id
-                              ? 'bg-amber-500 text-slate-950 border-amber-600'
-                              : 'bg-white text-slate-700 border-slate-300'
-                          }`}
-                        >
-                          {sz.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
                 </div>
               )}
             </div>
@@ -4753,16 +6665,27 @@ export const EditorToolbar: React.FC<Props> = ({
                     />
                   </div>
 
-                  {/* Stamp Text Offset Controls */}
-                  <OffsetPad
-                    title="تحريك الكتابة داخل الختم"
-                    subtitle="ضبط موقع نص الختم أفقياً ورأسياً"
-                    offsetX={certificateData.stamp.textOffsetX || 0}
-                    offsetY={certificateData.stamp.textOffsetY || 0}
-                    onChangeX={(val) => updateField('stamp', { ...certificateData.stamp, textOffsetX: val })}
-                    onChangeY={(val) => updateField('stamp', { ...certificateData.stamp, textOffsetY: val })}
-                    onReset={() => updateField('stamp', { ...certificateData.stamp, textOffsetX: 0, textOffsetY: 0 })}
-                  />
+                  {/* Stamp Position & Text Offset Controls */}
+                  <div className="space-y-2 pt-2 border-t border-slate-200">
+                    <OffsetPad
+                      title="تحريك موضع الختم بالكامل"
+                      subtitle="ضبط موقع الختم على مساحة الشهادة أفقياً ورأسياً"
+                      offsetX={certificateData.stamp.offsetX || 0}
+                      offsetY={certificateData.stamp.offsetY || 0}
+                      onChangeX={(val) => updateField('stamp', { ...certificateData.stamp, offsetX: val })}
+                      onChangeY={(val) => updateField('stamp', { ...certificateData.stamp, offsetY: val })}
+                      onReset={() => updateField('stamp', { ...certificateData.stamp, offsetX: 0, offsetY: 0 })}
+                    />
+                    <OffsetPad
+                      title="تحريك الكتابة داخل الختم"
+                      subtitle="ضبط موقع نص الختم أفقياً ورأسياً داخل الإطار"
+                      offsetX={certificateData.stamp.textOffsetX || 0}
+                      offsetY={certificateData.stamp.textOffsetY || 0}
+                      onChangeX={(val) => updateField('stamp', { ...certificateData.stamp, textOffsetX: val })}
+                      onChangeY={(val) => updateField('stamp', { ...certificateData.stamp, textOffsetY: val })}
+                      onReset={() => updateField('stamp', { ...certificateData.stamp, textOffsetX: 0, textOffsetY: 0 })}
+                    />
+                  </div>
                 </div>
               )}
             </div>
@@ -5459,13 +7382,17 @@ export const EditorToolbar: React.FC<Props> = ({
                           pattern: certificateData.verificationCodePattern,
                           forceNew: true
                         });
-                        updateField('verificationCode', newCode);
-                        updateField('certNumber', newCode);
+                        onChange({
+                          ...certificateData,
+                          verificationCode: newCode,
+                          certNumber: newCode,
+                          updatedAt: new Date().toISOString()
+                        });
                       }}
-                      className="w-full py-2 px-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white font-bold text-xs rounded-xl shadow-xs flex items-center justify-center gap-1.5 transition active:scale-[0.98] cursor-pointer"
+                      className="w-full py-2.5 px-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-black text-xs rounded-xl shadow-xs flex items-center justify-center gap-2 transition active:scale-[0.98] cursor-pointer"
                     >
-                      <RefreshCw className="w-3.5 h-3.5" />
-                      توليد كود توثيق جديد الآن (Generate New Code)
+                      <RefreshCw className="w-4 h-4 text-slate-900" />
+                      <span>توليد كود توثيق جديد الآن (Generate New Code)</span>
                     </button>
 
                     {/* Active Verification Code Input */}
@@ -5478,8 +7405,12 @@ export const EditorToolbar: React.FC<Props> = ({
                         value={certificateData.verificationCode || certificateData.certNumber || ''}
                         onChange={(e) => {
                           const sanitized = sanitizeVerificationCode(e.target.value);
-                          updateField('verificationCode', sanitized);
-                          updateField('certNumber', sanitized);
+                          onChange({
+                            ...certificateData,
+                            verificationCode: sanitized,
+                            certNumber: sanitized,
+                            updatedAt: new Date().toISOString()
+                          });
                         }}
                         placeholder="الكود التسلسلي (مثال: TAQDEER-2026-X89F2A)"
                         className="w-full px-3 py-1.5 text-xs font-mono font-black border border-amber-300 rounded-lg bg-amber-50/30 text-amber-950 focus:bg-white transition"
@@ -5620,18 +7551,117 @@ export const EditorToolbar: React.FC<Props> = ({
                         className="w-full accent-amber-500 cursor-pointer"
                       />
                     </div>
+                  </div>
+                </div>
 
-                    {/* Verification Box Elements Offset Pad */}
+                {/* 5. Movement and Granular Offsets for Verification Box */}
+                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs space-y-3">
+                  <div className="border-b pb-2 border-slate-100 flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                      <Move className="w-4 h-4 text-amber-500" />
+                      تحريك عناصر مربع التوثيق (جماعي أو كل عنصر منفصل)
+                    </span>
+                  </div>
+
+                  <div className="space-y-3 pt-1">
+                    {/* Collective verification box movement */}
                     <OffsetPad
-                      title="تحريك العناصر داخل مربع التوثيق"
-                      subtitle="إمكانية تحريك الكلام والعناصر لليمين واليسار ولأعلى وأسفل"
+                      title="تحريك مربع التوثيق بالكامل"
+                      subtitle="تحريك كافة محتويات مربع التوثيق ككتلة واحدة"
                       offsetX={certificateData.verificationTextOffsetX || 0}
                       offsetY={certificateData.verificationTextOffsetY || 0}
                       onChangeX={(val) => updateField('verificationTextOffsetX', val)}
                       onChangeY={(val) => updateField('verificationTextOffsetY', val)}
                       onReset={() => onChange({ ...certificateData, verificationTextOffsetX: 0, verificationTextOffsetY: 0, updatedAt: new Date().toISOString() })}
                     />
+
+                    {/* Sub-element granular movement */}
+                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-2.5">
+                      <span className="text-[11px] font-bold text-slate-800 block">
+                        🎯 تحريك كل عنصر من مربع التوثيق على حدة:
+                      </span>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <OffsetPad
+                          title="تحريك رمز الاستجابة (QR)"
+                          subtitle="تحريك مربع رمز QR"
+                          offsetX={certificateData.verificationQrOffsetX || 0}
+                          offsetY={certificateData.verificationQrOffsetY || 0}
+                          onChangeX={(val) => updateField('verificationQrOffsetX', val)}
+                          onChangeY={(val) => updateField('verificationQrOffsetY', val)}
+                          onReset={() => onChange({ ...certificateData, verificationQrOffsetX: 0, verificationQrOffsetY: 0, updatedAt: new Date().toISOString() })}
+                        />
+                        <OffsetPad
+                          title="تحريك الباركود الشريطي"
+                          subtitle="تحريك خطوط الباركود"
+                          offsetX={certificateData.verificationBarcodeOffsetX || 0}
+                          offsetY={certificateData.verificationBarcodeOffsetY || 0}
+                          onChangeX={(val) => updateField('verificationBarcodeOffsetX', val)}
+                          onChangeY={(val) => updateField('verificationBarcodeOffsetY', val)}
+                          onReset={() => onChange({ ...certificateData, verificationBarcodeOffsetX: 0, verificationBarcodeOffsetY: 0, updatedAt: new Date().toISOString() })}
+                        />
+                        <OffsetPad
+                          title="تحريك كود/رقم الشهادة"
+                          subtitle="تحريك نص الكود التسلسلي"
+                          offsetX={certificateData.verificationSerialOffsetX || 0}
+                          offsetY={certificateData.verificationSerialOffsetY || 0}
+                          onChangeX={(val) => updateField('verificationSerialOffsetX', val)}
+                          onChangeY={(val) => updateField('verificationSerialOffsetY', val)}
+                          onReset={() => onChange({ ...certificateData, verificationSerialOffsetX: 0, verificationSerialOffsetY: 0, updatedAt: new Date().toISOString() })}
+                        />
+                        <OffsetPad
+                          title="تحريك عبارة التوثيق"
+                          subtitle="تحريك نص (شهادة موثقة رقمياً)"
+                          offsetX={certificateData.verificationPhraseOffsetX || 0}
+                          offsetY={certificateData.verificationPhraseOffsetY || 0}
+                          onChangeX={(val) => updateField('verificationPhraseOffsetX', val)}
+                          onChangeY={(val) => updateField('verificationPhraseOffsetY', val)}
+                          onReset={() => onChange({ ...certificateData, verificationPhraseOffsetX: 0, verificationPhraseOffsetY: 0, updatedAt: new Date().toISOString() })}
+                        />
+                      </div>
+                    </div>
                   </div>
+                </div>
+
+                {/* 6. Save Verification Settings as Default */}
+                <div className="p-3.5 bg-gradient-to-r from-amber-50 to-orange-50 rounded-2xl border border-amber-200 flex flex-col sm:flex-row items-center justify-between gap-3">
+                  <div className="text-right">
+                    <h5 className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                      <Save className="w-4 h-4 text-amber-600" />
+                      حفظ إعدادات مربع التوثيق كافتراضي
+                    </h5>
+                    <p className="text-[10px] text-amber-800 mt-0.5">
+                      سيتم تطبيق نفس النموذج، الألوان، الشفافية والبادئة تلقائياً على جميع الشهادات الجديدة.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const currentDefaults = getSavedDefaultSettings();
+                      const updatedDefaults = {
+                        ...currentDefaults,
+                        verificationBoxPattern: certificateData.verificationBoxPattern,
+                        showVerificationQr: certificateData.showVerificationQr,
+                        showVerificationBarcode: certificateData.showVerificationBarcode,
+                        showVerificationSerialCode: certificateData.showVerificationSerialCode,
+                        showVerificationStatusText: certificateData.showVerificationStatusText,
+                        showVerificationIcon: certificateData.showVerificationIcon,
+                        verificationBadgeText: certificateData.verificationBadgeText,
+                        verificationPrefix: certificateData.verificationPrefix,
+                        verificationCodePattern: certificateData.verificationCodePattern,
+                        verificationBoxBgColor: certificateData.verificationBoxBgColor,
+                        verificationBoxTextColor: certificateData.verificationBoxTextColor,
+                        verificationBoxBorderColor: certificateData.verificationBoxBorderColor,
+                        verificationBoxBgOpacity: certificateData.verificationBoxBgOpacity,
+                        verificationBoxSize: certificateData.verificationBoxSize,
+                      };
+                      saveDefaultSettingsToStorage(updatedDefaults);
+                      alert('تم حفظ إعدادات مربع التوثيق كافتراضي لجميع الشهادات القادمة بنجاح! ✨');
+                    }}
+                    className="w-full sm:w-auto px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
+                  >
+                    <BookmarkCheck className="w-4 h-4" />
+                    حفظ كافتراضي 💾
+                  </button>
                 </div>
               </div>
             ) : (

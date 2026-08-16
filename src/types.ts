@@ -18,6 +18,23 @@ export type AspectRatioOption = 'A4-landscape' | 'A4-portrait' | 'square';
 
 export type BadgeIconType = 'award' | 'star' | 'trophy' | 'crown' | 'shield' | 'heart' | 'sparkles' | 'book' | 'target' | 'medal';
 
+export type BadgeBgShape = 
+  | 'pill'          // كبسولة دائرية انسيابية
+  | 'rounded'       // مستطيل بحواف مستديرة
+  | 'banner'        // شريط ملكي بشريطين جانبيين
+  | 'square'        // إطار أنيق بزوايا قائمة
+  | 'ornate'        // إطار زخرفي محدد
+  | 'minimal'       // إطار خطي ناعم
+  | 'none';         // بدون خلفية (نص فقط)
+
+export type BadgeBgShadow = 
+  | 'none' 
+  | 'sm' 
+  | 'md' 
+  | 'lg' 
+  | 'glow' 
+  | 'gold-glow';
+
 export type FrameStyle = 
   | 'double-gold' 
   | 'classic-ornate' 
@@ -41,6 +58,16 @@ export type FrameStyle =
   | 'moroccan-mosaic'
   | 'victorian-crest'
   | 'double-dotted-luxury';
+
+export type LayoutPreset = 
+  | 'classic-standard'      // تخطيط تقليدي متوازن (ترويسة كاملة، عنوان، متن، أختام، توقيعات)
+  | 'modern-split'         // تخطيط عصري مقسم (توزيع متوازن وبارز)
+  | 'sidebar-right'        // تخطيط الإطار الجانبي الأيمن
+  | 'sidebar-left'         // تخطيط الإطار الجانبي الأيسر
+  | 'minimal-centered'     // تخطيط مركز ومبسط
+  | 'executive-horizontal' // تخطيط تنفيذي أفقي
+  | 'diploma-grand'        // تخطيط دبلوم أكاديمي رفيع
+  | 'custom-grid';         // تخطيط مخصص متقدم (Custom Layout)
 
 export type VerificationBoxPattern = 
   | 'classic'         // البطاقة المعتمدة الكلاسيكية
@@ -102,6 +129,8 @@ export interface StampItem {
   opacity?: number; // Stamp opacity from 0.1 to 1.0
   textOffsetX?: number; // X offset in px (-100 to 100)
   textOffsetY?: number; // Y offset in px (-100 to 100)
+  offsetX?: number; // X offset for whole stamp in px (-150 to 150)
+  offsetY?: number; // Y offset for whole stamp in px (-150 to 150)
   show: boolean;
 }
 
@@ -212,6 +241,34 @@ export interface CertificateData {
   badgeSize?: 'sm' | 'md' | 'lg';
   showBadgeTitle?: boolean;         // Toggle for showing/hiding badge title label under medal
   showBadge: boolean;
+  // --- Badge / Medal Title Background Customization ---
+  badgeBgShape?: BadgeBgShape;               // Background shape / style
+  badgeBgColor?: string;                     // Primary background color
+  badgeBgColor2?: string;                    // Secondary gradient color
+  badgeBgGradient?: boolean;                 // Enable gradient fill
+  badgeBgOpacity?: number;                   // Background opacity (0.1 to 1.0)
+  badgeBgBorderColor?: string;               // Border color
+  badgeBgBorderWidth?: number;               // Border width (0 to 6px)
+  badgeBgBorderStyle?: 'solid' | 'dashed' | 'double' | 'none';
+  badgeBgRadius?: number;                    // Corner radius in px (0 to 40)
+  badgeBgWidthMode?: 'auto' | 'custom' | 'full'; // Width mode: auto-fit content, custom width px, or max width
+  badgeBgWidthPx?: number;                   // Custom width in pixels (60 to 320px)
+  badgeBgPaddingX?: number;                  // Horizontal padding (2 to 36px)
+  badgeBgPaddingY?: number;                  // Vertical padding (1 to 20px)
+  badgeBgShadow?: BadgeBgShadow;             // Shadow/glow preset
+  badgeBgOffsetX?: number;                   // Background X offset (-100 to 100)
+  badgeBgOffsetY?: number;                   // Background Y offset (-100 to 100)
+  // --- Badge / Medal Title Text Customization ---
+  badgeTextColor?: string;                   // Text font color (default '#ffffff')
+  badgeTextFontSize?: number;                // Text font size in pixels (7 to 26px, default 10)
+  badgeTextFontFamily?: FontOption;          // Custom font family for badge title
+  badgeTextFontWeight?: 'normal' | 'bold' | 'extrabold' | 'black'; // Font weight
+  badgeTextLetterSpacing?: number;           // Letter spacing in px (-1 to 4)
+  badgeTextAlign?: 'center' | 'right' | 'left'; // Text alignment
+  badgeTextOffsetX?: number;                 // Fine text X offset inside container (-50 to 50)
+  badgeTextOffsetY?: number;                 // Fine text Y offset inside container (-50 to 50)
+  badgeTextWrap?: 'nowrap' | 'wrap';         // Text wrapping mode
+  badgeTextAutoFit?: boolean;                // Auto-fit / prevent overflow (bound inside box)
   signatures: SignatureItem[];
   stamp: StampItem;
   emojis: EmojiItem[];
@@ -236,6 +293,10 @@ export interface CertificateData {
   headerFontFamily?: FontOption;    // Independent font family for top header (default: 'Cairo')
   headerFontSizeScale?: number;   // Independent font size scale for top header (default: 1.0)
   aspectRatio: AspectRatioOption;
+  layoutPreset?: LayoutPreset;               // Dynamic CSS Grid Layout Preset
+  customGridTemplateAreas?: string;          // User-defined CSS Grid Template Areas string (e.g. '"header header" "title title" "body stamps" "signatures signatures"')
+  customGridTemplateColumns?: string;        // Optional custom grid template columns (e.g. "1fr 1fr", "220px 1fr")
+  customGridTemplateRows?: string;           // Optional custom grid template rows (e.g. "auto auto 1fr auto")
   qrCodeData: string;
   showQrCode: boolean;
   showVerificationBox?: boolean;             // Alias/sync for showing or hiding verification box
@@ -254,12 +315,52 @@ export interface CertificateData {
   verificationCodePattern?: VerificationCodePattern; // Generation pattern format
   verificationTextOffsetX?: number;          // X offset for text/elements inside verification box (-100 to 100)
   verificationTextOffsetY?: number;          // Y offset for text/elements inside verification box (-100 to 100)
+  verificationQrOffsetX?: number;            // X offset for QR code element in verification box (-100 to 100)
+  verificationQrOffsetY?: number;            // Y offset for QR code element in verification box (-100 to 100)
+  verificationBarcodeOffsetX?: number;       // X offset for Barcode svg in verification box (-100 to 100)
+  verificationBarcodeOffsetY?: number;       // Y offset for Barcode svg in verification box (-100 to 100)
+  verificationSerialOffsetX?: number;        // X offset for Serial code text in verification box (-100 to 100)
+  verificationSerialOffsetY?: number;        // Y offset for Serial code text in verification box (-100 to 100)
+  verificationPhraseOffsetX?: number;        // X offset for Status Phrase text in verification box (-100 to 100)
+  verificationPhraseOffsetY?: number;        // Y offset for Status Phrase text in verification box (-100 to 100)
+  badgeBoxOffsetX?: number;                  // X offset for badge box/pill below badge title (-100 to 100)
+  badgeBoxOffsetY?: number;                  // Y offset for badge box/pill below badge title (-100 to 100)
   badgeTitleOffsetX?: number;                // X offset for badge title label (-100 to 100)
   badgeTitleOffsetY?: number;                // Y offset for badge title label (-100 to 100)
   logoTextOffsetX?: number;                  // X offset for logo text/initial (-100 to 100)
   logoTextOffsetY?: number;                  // Y offset for logo text/initial (-100 to 100)
   headerTextOffsetX?: number;                // X offset for header lines text (-100 to 100)
   headerTextOffsetY?: number;                // Y offset for header lines text (-100 to 100)
+  headerLine1OffsetX?: number;               // Independent X offset for Header Line 1 (-100 to 100)
+  headerLine1OffsetY?: number;               // Independent Y offset for Header Line 1 (-100 to 100)
+  headerLine2OffsetX?: number;               // Independent X offset for Header Line 2 (-100 to 100)
+  headerLine2OffsetY?: number;               // Independent Y offset for Header Line 2 (-100 to 100)
+  headerLine3OffsetX?: number;               // Independent X offset for Header Line 3 (-100 to 100)
+  headerLine3OffsetY?: number;               // Independent Y offset for Header Line 3 (-100 to 100)
+  headerSchoolNameOffsetX?: number;          // Independent X offset for School Name in header (-100 to 100)
+  headerSchoolNameOffsetY?: number;          // Independent Y offset for School Name in header (-100 to 100)
+  headerDateOffsetX?: number;                // Independent X offset for Date in header (-100 to 100)
+  headerDateOffsetY?: number;                // Independent Y offset for Date in header (-100 to 100)
+  headerPlaceOffsetX?: number;               // Independent X offset for Place in header (-100 to 100)
+  headerPlaceOffsetY?: number;               // Independent Y offset for Place in header (-100 to 100)
+  headerCertNumberOffsetX?: number;          // Independent X offset for Cert Number in header (-100 to 100)
+  headerCertNumberOffsetY?: number;          // Independent Y offset for Cert Number in header (-100 to 100)
+  titleOffsetX?: number;                     // Independent X offset for Certificate Title (-100 to 100)
+  titleOffsetY?: number;                     // Independent Y offset for Certificate Title (-100 to 100)
+  subtitleOffsetX?: number;                  // Independent X offset for Subtitle (-100 to 100)
+  subtitleOffsetY?: number;                  // Independent Y offset for Subtitle (-100 to 100)
+  recipientIntroOffsetX?: number;            // Independent X offset for Recipient Intro (-100 to 100)
+  recipientIntroOffsetY?: number;            // Independent Y offset for Recipient Intro (-100 to 100)
+  studentNameOffsetX?: number;               // Independent X offset for Student Name (-100 to 100)
+  studentNameOffsetY?: number;               // Independent Y offset for Student Name (-100 to 100)
+  gradeOffsetX?: number;                     // Independent X offset for Grade (-100 to 100)
+  gradeOffsetY?: number;                     // Independent Y offset for Grade (-100 to 100)
+  appreciationTextOffsetX?: number;          // Independent X offset for Appreciation Text (-100 to 100)
+  appreciationTextOffsetY?: number;          // Independent Y offset for Appreciation Text (-100 to 100)
+  poemOrQuoteOffsetX?: number;               // Independent X offset for Poem / Quote (-100 to 100)
+  poemOrQuoteOffsetY?: number;               // Independent Y offset for Poem / Quote (-100 to 100)
+  signaturesBlockOffsetX?: number;           // Independent X offset for Signatures Block (-100 to 100)
+  signaturesBlockOffsetY?: number;           // Independent Y offset for Signatures Block (-100 to 100)
   showRecipientBox?: boolean;
   recipientBoxColor?: string;         // Hex color for Golden/Accent Recipient Box (default: '#f59e0b')
   recipientBoxOpacity?: number;       // Opacity for Golden/Accent Recipient Box (0.0 to 1.0, default: 0.12)
