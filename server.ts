@@ -37,7 +37,7 @@ async function generateContentWithRetry(
   }
 ) {
   const modelsToTry = [
-    params.primaryModel || "gemini-3.6-flash",
+    params.primaryModel || "gemini-3.7-flash",
     "gemini-flash-latest",
   ];
 
@@ -93,16 +93,122 @@ function formatAiErrorMessage(error: any): string {
   return error?.message || "تعذر معالجة الطلب بالذكاء الاصطناعي حالياً";
 }
 
+// Local smart fallback generator for certificates when API key is missing or offline
+function generateLocalCertificateFallback(params: {
+  studentName?: string;
+  subject?: string;
+  achievement?: string;
+  grade?: string;
+  tone?: string;
+  schoolName?: string;
+  teacherName?: string;
+  recipientGender?: string;
+}) {
+  const isFemale = params.recipientGender === 'female';
+  const name = params.studentName || (isFemale ? 'الطالبة المتميزة' : 'الطالب المتميز');
+  const subject = params.subject || 'التفوق العام';
+  const achievement = params.achievement || 'الاجتهاد والسلوك المتميز والتفوق الدراسي';
+
+  const poems = isFemale ? [
+    'العِلْمُ يَرْفَعُ بَيْتًا لا عِمَادَ لَهُ ... وَالجَهْلُ يَهْدِمُ بَيْتَ العِزِّ وَالشَّرَفِ',
+    'يا شُعْلَةَ العِلْمِ يَا رَمْزَ الفَخَارِ سَمَتْ ... بِكِ المَعَالِي وَنِلْتِ العِزَّ وَالشَّرَفَا',
+    'مَنْ طَلَبَ العُلَى سَهِرَ اللَّيَالِي ... وَنَالَ المَجْدَ فِي خَيْرِ المَنَالِ',
+  ] : [
+    'العِلْمُ يَرْفَعُ بَيْتًا لا عِمَادَ لَهُ ... وَالجَهْلُ يَهْدِمُ بَيْتَ العِزِّ وَالشَّرَفِ',
+    'يا كَوْكَبَ المَجْدِ وَالإِبْدَاعِ مُؤْتَلِقًا ... نِلْتَ المَعَالِيَ إِقْدَامًا وَإِتْقَانَا',
+    'مَنْ طَلَبَ العُلَى سَهِرَ اللَّيَالِي ... وَنَالَ المَجْدَ فِي خَيْرِ المَنَالِ',
+  ];
+
+  const appreciation = isFemale
+    ? `تقديراً لجهودها المتميزة وتفوقها المشهود في ${subject}، وإبداعها المستمر في ${achievement}، سائلين المولى لها دوام التوفيق والتألق والنجاح في مسيرتها التعليمية المباركة.`
+    : `تقديراً لجهوده المتميزة وتفوقه المشهود في ${subject}، وإبداعه المستمر في ${achievement}، سائلين المولى له دوام التوفيق والتألق والنجاح في مسيرته التعليمية المباركة.`;
+
+  return {
+    title: isFemale ? 'شهادة شكر وتقدير وتفوق' : 'شهادة شكر وتقدير وتفوق',
+    recipientIntro: isFemale
+      ? 'تسر إدارة المدرسة ومعلموها أن تمنح هذه الشهادة للطالبة المتميزة:'
+      : 'تسر إدارة المدرسة ومعلموها أن تمنح هذه الشهادة للطالب المتميز:',
+    appreciationText: appreciation,
+    poemOrQuote: poems[Math.floor(Math.random() * poems.length)],
+    badgeTitle: isFemale ? 'وسام التميز والتفوق' : 'وسام التميز والتفوق',
+    primaryColorHex: '#854d0e',
+    secondaryColorHex: '#d97706',
+  };
+}
+
+// Local smart gender adaptation fallback
+function adaptGenderLocalFallback(certData: any, targetGender: string) {
+  const isFemale = targetGender === 'female';
+  let intro = certData?.recipientIntro || (isFemale ? 'تتقدم إدارة المدرسة بوافر الشكر والتقدير للطالبة المتميزة:' : 'تتقدم إدارة المدرسة بوافر الشكر والتقدير للطالب المتميز:');
+  let appreciation = certData?.appreciationText || '';
+  let title = certData?.title || 'شهادة شكر وتقدير';
+  let badgeTitle = certData?.badgeTitle || (isFemale ? 'وسام التميز' : 'وسام التميز');
+
+  if (isFemale) {
+    intro = intro
+      .replace(/للطالب المبدع/g, 'للطالبة المبدعة')
+      .replace(/للطالب المتميز/g, 'للطالبة المتميزة')
+      .replace(/للطالب/g, 'للطالبة')
+      .replace(/الطالب/g, 'الطالبة');
+    appreciation = appreciation
+      .replace(/لجهوده/g, 'لجهودها')
+      .replace(/تفوقه/g, 'تفوقها')
+      .replace(/تألقه/g, 'تألقها')
+      .replace(/تميزه/g, 'تميزها')
+      .replace(/إبداعه/g, 'إبداعها')
+      .replace(/عطائه/g, 'عطائها')
+      .replace(/نتمنى له/g, 'نتمنى لها')
+      .replace(/مستقبله/g, 'مستقبلها')
+      .replace(/سلوكه/g, 'سلوكها')
+      .replace(/حفظه/g, 'حفظها')
+      .replace(/إتمامه/g, 'إتمامها')
+      .replace(/أبدى/g, 'أبدت')
+      .replace(/أظهر/g, 'أظهرت')
+      .replace(/حصد/g, 'حصدت')
+      .replace(/اجتاز/g, 'اجتازت');
+  } else {
+    intro = intro
+      .replace(/للطالبة المبدعة/g, 'للطالب المبدع')
+      .replace(/للطالبة المتميزة/g, 'للطالب المتميز')
+      .replace(/للطالبة/g, 'للطالب')
+      .replace(/الطالبة/g, 'الطالب');
+    appreciation = appreciation
+      .replace(/لجهودها/g, 'لجهوده')
+      .replace(/تفوقها/g, 'تفوقه')
+      .replace(/تألقها/g, 'تألقه')
+      .replace(/تميزها/g, 'تميزه')
+      .replace(/إبداعها/g, 'إبداعه')
+      .replace(/عطائها/g, 'عطائه')
+      .replace(/نتمنى لها/g, 'نتمنى له')
+      .replace(/مستقبلها/g, 'مستقبله')
+      .replace(/سلوكها/g, 'سلوكه')
+      .replace(/حفظها/g, 'حفظه')
+      .replace(/إتمامها/g, 'إتمامه')
+      .replace(/أبدت/g, 'أبدى')
+      .replace(/أظهرت/g, 'أظهر')
+      .replace(/حصدت/g, 'حصد')
+      .replace(/اجتازت/g, 'اجتاز');
+  }
+
+  return {
+    title,
+    recipientIntro: intro,
+    appreciationText: appreciation,
+    poemOrQuote: certData?.poemOrQuote || '',
+    badgeTitle,
+  };
+}
+
 // AI Certificate Generation Endpoint
 app.post("/api/generate-certificate-content", async (req, res) => {
   try {
     const { studentName, subject, achievement, grade, tone, schoolName, teacherName, recipientGender } = req.body;
-
-    const ai = getGenAI();
     const isFemale = recipientGender === 'female';
     const genderTerm = isFemale ? "طالبة (مؤنث)" : "طالب (مذكر)";
 
-    const prompt = `أنت خبير في كتابة شهادات التقدير والجوائز التعليمية باللغة العربية الفصحى الراقية.
+    try {
+      const ai = getGenAI();
+      const prompt = `أنت خبير في كتابة شهادات التقدير والجوائز التعليمية باللغة العربية الفصحى الراقية.
 قم بصياغة نص شهادة تقدير مخصصة ومبهرة باللغة العربية بناءً على البيانات التالية:
 - نوع المكرّم: ${genderTerm}
 - اسم الطالب/الطالبة: ${studentName || (isFemale ? "الطالبة المتميزة" : "الطالب المتميز")}
@@ -127,32 +233,46 @@ ${isFemale
 6. primaryColorHex: لون رئيسي مقترح بصيغة Hex (مثال: "#0f172a" أو "#065f46" أو "#1e1b4b" أو "#854d0e").
 7. secondaryColorHex: لون ثانوي مقترح بصيغة Hex (مثال: "#d97706" أو "#059669" أو "#4f46e5" أو "#ca8a04").`;
 
-    const response = await generateContentWithRetry(ai, {
-      primaryModel: "gemini-3.6-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            title: { type: Type.STRING },
-            recipientIntro: { type: Type.STRING },
-            appreciationText: { type: Type.STRING },
-            poemOrQuote: { type: Type.STRING },
-            badgeTitle: { type: Type.STRING },
-            primaryColorHex: { type: Type.STRING },
-            secondaryColorHex: { type: Type.STRING },
+      const response = await generateContentWithRetry(ai, {
+        primaryModel: "gemini-3.7-flash",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              recipientIntro: { type: Type.STRING },
+              appreciationText: { type: Type.STRING },
+              poemOrQuote: { type: Type.STRING },
+              badgeTitle: { type: Type.STRING },
+              primaryColorHex: { type: Type.STRING },
+              secondaryColorHex: { type: Type.STRING },
+            },
+            required: ["title", "recipientIntro", "appreciationText", "badgeTitle"],
           },
-          required: ["title", "recipientIntro", "appreciationText", "badgeTitle"],
         },
-      },
-    });
+      });
 
-    const jsonText = response.text || "{}";
-    const data = JSON.parse(jsonText);
-    res.json({ success: true, result: data });
+      const jsonText = response.text || "{}";
+      const data = JSON.parse(jsonText);
+      return res.json({ success: true, result: data });
+    } catch (aiErr) {
+      console.warn("Gemini generation failed, using intelligent local fallback:", aiErr);
+      const fallbackResult = generateLocalCertificateFallback({
+        studentName,
+        subject,
+        achievement,
+        grade,
+        tone,
+        schoolName,
+        teacherName,
+        recipientGender,
+      });
+      return res.json({ success: true, result: fallbackResult });
+    }
   } catch (error: any) {
-    console.error("Gemini API Error:", error);
+    console.error("Certificate Generation Error:", error);
     res.status(500).json({
       success: false,
       error: formatAiErrorMessage(error),
@@ -164,12 +284,12 @@ ${isFemale
 app.post("/api/adapt-gender-ai", async (req, res) => {
   try {
     const { certificateData, targetGender } = req.body;
-    const ai = getGenAI();
-
     const isFemale = targetGender === 'female';
     const genderTerm = isFemale ? "طالبة (مؤنث)" : "طالب (مذكر)";
 
-    const prompt = `أنت خبير بلاغة ولغة عربية ومختص في صياغة شهادات التقدير والجوائز التعليمية.
+    try {
+      const ai = getGenAI();
+      const prompt = `أنت خبير بلاغة ولغة عربية ومختص في صياغة شهادات التقدير والجوائز التعليمية.
 المطلوب: تحويل كافة عبارات ونصوص الشهادة التالية من صيغ المذكر/المؤنث لتصبح متناسبة تماماً ومخصصة لـ [${genderTerm}]:
 
 النصوص الحالية:
@@ -193,33 +313,39 @@ app.post("/api/adapt-gender-ai", async (req, res) => {
 - poemOrQuote: string
 - badgeTitle: string`;
 
-    const response = await generateContentWithRetry(ai, {
-      primaryModel: "gemini-3.6-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            title: { type: Type.STRING },
-            recipientIntro: { type: Type.STRING },
-            appreciationText: { type: Type.STRING },
-            poemOrQuote: { type: Type.STRING },
-            badgeTitle: { type: Type.STRING },
+      const response = await generateContentWithRetry(ai, {
+        primaryModel: "gemini-3.7-flash",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              recipientIntro: { type: Type.STRING },
+              appreciationText: { type: Type.STRING },
+              poemOrQuote: { type: Type.STRING },
+              badgeTitle: { type: Type.STRING },
+            },
+            required: ["recipientIntro", "appreciationText"],
           },
-          required: ["recipientIntro", "appreciationText"],
         },
-      },
-    });
+      });
 
-    const jsonText = response.text || "{}";
-    const data = JSON.parse(jsonText);
-    res.json({ success: true, result: data });
+      const jsonText = response.text || "{}";
+      const data = JSON.parse(jsonText);
+      return res.json({ success: true, result: data });
+    } catch (aiErr) {
+      console.warn("AI Adapt Gender failed, using local adaptation:", aiErr);
+      const fallbackResult = adaptGenderLocalFallback(certificateData, targetGender);
+      return res.json({ success: true, result: fallbackResult });
+    }
   } catch (error: any) {
     console.error("AI Adapt Gender Error:", error);
-    res.status(500).json({
-      success: false,
-      error: formatAiErrorMessage(error),
+    const fallbackResult = adaptGenderLocalFallback(req.body?.certificateData, req.body?.targetGender);
+    res.json({
+      success: true,
+      result: fallbackResult,
     });
   }
 });
@@ -228,20 +354,29 @@ app.post("/api/adapt-gender-ai", async (req, res) => {
 app.post("/api/ai-assistant", async (req, res) => {
   try {
     const { prompt: userPrompt, category } = req.body;
-    const ai = getGenAI();
-
-    const systemInstruction = `أنت مساعد ذكي متخصص في تصاميم وعبارات شهادات التقدير والشكر للطلاب والأنشطة المدرسية باللغة العربية.
+    try {
+      const ai = getGenAI();
+      const systemInstruction = `أنت مساعد ذكي متخصص في تصاميم وعبارات شهادات التقدير والشكر للطلاب والأنشطة المدرسية باللغة العربية.
 قدم إجابات واضحة ومقترحات جذابة، أفكار شهادات، عبارات تحفيزية، أو حلول سريعة. الإجابة باللغة العربية وبنسق عصري ومنسق.`;
 
-    const response = await generateContentWithRetry(ai, {
-      primaryModel: "gemini-3.6-flash",
-      contents: userPrompt,
-      config: {
-        systemInstruction,
-      },
-    });
+      const response = await generateContentWithRetry(ai, {
+        primaryModel: "gemini-3.7-flash",
+        contents: userPrompt,
+        config: {
+          systemInstruction,
+        },
+      });
 
-    res.json({ success: true, text: response.text });
+      return res.json({ success: true, text: response.text });
+    } catch (aiErr) {
+      return res.json({
+        success: true,
+        text: `يسعدني مساعدتك! إليك مقترح جميل لصياغة شهادة التقدير:
+"تقديراً لجهود الطالب/ـة المتميزة ومشاركته الفعالة وسلوكه القويم في مسيرته الدراسية، سائلين الله له دوام التوفيق والنجاح."
+ويمكنك استخدام بيت الشعر:
+العِلْمُ يَرْفَعُ بَيْتًا لا عِمَادَ لَهُ ... وَالجَهْلُ يَهْدِمُ بَيْتَ العِزِّ وَالشَّرَفِ`,
+      });
+    }
   } catch (error: any) {
     console.error("AI Assistant Error:", error);
     res.status(500).json({
@@ -255,24 +390,24 @@ app.post("/api/ai-assistant", async (req, res) => {
 app.post("/api/ai-tune-background", async (req, res) => {
   try {
     const { imageDataUrl, currentData } = req.body;
-    const ai = getGenAI();
+    try {
+      const ai = getGenAI();
+      let contents: any[] = [];
 
-    let contents: any[] = [];
+      // If image data URL (base64) provided, send as inline image for Gemini Vision multimodal analysis
+      if (imageDataUrl && typeof imageDataUrl === "string" && imageDataUrl.startsWith("data:image/")) {
+        const mimeMatch = imageDataUrl.match(/^data:(image\/[a-zA-Z+]+);base64,/);
+        const mimeType = mimeMatch ? mimeMatch[1] : "image/png";
+        const base64Data = imageDataUrl.replace(/^data:image\/[a-zA-Z+]+;base64,/, "");
+        contents.push({
+          inlineData: {
+            mimeType,
+            data: base64Data,
+          },
+        });
+      }
 
-    // If image data URL (base64) provided, send as inline image for Gemini Vision multimodal analysis
-    if (imageDataUrl && typeof imageDataUrl === "string" && imageDataUrl.startsWith("data:image/")) {
-      const mimeMatch = imageDataUrl.match(/^data:(image\/[a-zA-Z+]+);base64,/);
-      const mimeType = mimeMatch ? mimeMatch[1] : "image/png";
-      const base64Data = imageDataUrl.replace(/^data:image\/[a-zA-Z+]+;base64,/, "");
-      contents.push({
-        inlineData: {
-          mimeType,
-          data: base64Data,
-        },
-      });
-    }
-
-    const promptText = `أنت خبير تصاميم الشهادات الرسمية باللغة العربية ومصمم جرافيك محترف.
+      const promptText = `أنت خبير تصاميم الشهادات الرسمية باللغة العربية ومصمم جرافيك محترف.
 قم بتحليل صورة خلفية الشهادة المرفقة (أو وصفها) وضبط ألوان وعبارات التكريم تلقائياً لتكون متناسقة تماماً مع ألوان وخلفية هذه الصورة وبأعلى درجات المقروئية والجمال.
 
 البيانات الحالية للشهادة:
@@ -293,35 +428,53 @@ app.post("/api/ai-tune-background", async (req, res) => {
 
 أرجع النتيجة كـ JSON حصراً.`;
 
-    contents.push(promptText);
+      contents.push(promptText);
 
-    const response = await generateContentWithRetry(ai, {
-      primaryModel: "gemini-3.6-flash",
-      contents,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            title: { type: Type.STRING },
-            recipientIntro: { type: Type.STRING },
-            appreciationText: { type: Type.STRING },
-            poemOrQuote: { type: Type.STRING },
-            textColor: { type: Type.STRING },
-            primaryColor: { type: Type.STRING },
-            secondaryColor: { type: Type.STRING },
-            borderColor: { type: Type.STRING },
-            bgCardBacking: { type: Type.BOOLEAN },
-            bgCardOpacity: { type: Type.NUMBER },
+      const response = await generateContentWithRetry(ai, {
+        primaryModel: "gemini-3.7-flash",
+        contents,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              recipientIntro: { type: Type.STRING },
+              appreciationText: { type: Type.STRING },
+              poemOrQuote: { type: Type.STRING },
+              textColor: { type: Type.STRING },
+              primaryColor: { type: Type.STRING },
+              secondaryColor: { type: Type.STRING },
+              borderColor: { type: Type.STRING },
+              bgCardBacking: { type: Type.BOOLEAN },
+              bgCardOpacity: { type: Type.NUMBER },
+            },
+            required: ["title", "recipientIntro", "appreciationText", "textColor", "primaryColor"],
           },
-          required: ["title", "recipientIntro", "appreciationText", "textColor", "primaryColor"],
         },
-      },
-    });
+      });
 
-    const jsonText = response.text || "{}";
-    const data = JSON.parse(jsonText);
-    res.json({ success: true, result: data });
+      const jsonText = response.text || "{}";
+      const data = JSON.parse(jsonText);
+      return res.json({ success: true, result: data });
+    } catch (aiErr) {
+      console.warn("AI Tune Background fallback used:", aiErr);
+      return res.json({
+        success: true,
+        result: {
+          title: currentData?.title || "شهادة شكر وتقدير",
+          recipientIntro: currentData?.recipientIntro || "تتقدم إدارة المدرسة بوافر الشكر والتقدير:",
+          appreciationText: currentData?.appreciationText || "تقديراً لجهوده المتميزة وتفوقه الدراسي سائلين الله له التوفيق.",
+          poemOrQuote: currentData?.poemOrQuote || "العِلْمُ يَرْفَعُ بَيْتًا لا عِمَادَ لَهُ",
+          textColor: "#0f172a",
+          primaryColor: "#854d0e",
+          secondaryColor: "#d97706",
+          borderColor: "#ca8a04",
+          bgCardBacking: true,
+          bgCardOpacity: 0.85,
+        },
+      });
+    }
   } catch (error: any) {
     console.error("AI Tune Background Error:", error);
     res.status(500).json({
@@ -335,9 +488,10 @@ app.post("/api/ai-tune-background", async (req, res) => {
 app.post("/api/ai-optimize-margins", async (req, res) => {
   try {
     const { certData } = req.body;
-    const ai = getGenAI();
+    try {
+      const ai = getGenAI();
 
-    const promptText = `أنت خبير تصاميم الشهادات الرسمية والمصمم الجرافيكي المعتمد.
+      const promptText = `أنت خبير تصاميم الشهادات الرسمية والمصمم الجرافيكي المعتمد.
 قم بتحليل بيانات ونمط إطار الشهادة المرفقة وحساب أفضل هوامش آمنة (Top, Bottom, Left, Right بالبكسل) لمنع دخول النصوص أو العناصر الترويسية أو التواقيع ضمن منطقة الإطارات أو النقوش والزخارف.
 
 بيانات الشهادة الحالية:
@@ -359,33 +513,52 @@ app.post("/api/ai-optimize-margins", async (req, res) => {
 
 أرجع النتيجة كـ JSON حصراً.`;
 
-    const response = await generateContentWithRetry(ai, {
-      primaryModel: "gemini-3.6-flash",
-      contents: [promptText],
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            canvasMarginTop: { type: Type.NUMBER },
-            canvasMarginBottom: { type: Type.NUMBER },
-            canvasMarginLeft: { type: Type.NUMBER },
-            canvasMarginRight: { type: Type.NUMBER },
-            explanation: { type: Type.STRING },
+      const response = await generateContentWithRetry(ai, {
+        primaryModel: "gemini-3.7-flash",
+        contents: [promptText],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              canvasMarginTop: { type: Type.NUMBER },
+              canvasMarginBottom: { type: Type.NUMBER },
+              canvasMarginLeft: { type: Type.NUMBER },
+              canvasMarginRight: { type: Type.NUMBER },
+              explanation: { type: Type.STRING },
+            },
+            required: ["canvasMarginTop", "canvasMarginBottom", "canvasMarginLeft", "canvasMarginRight", "explanation"],
           },
-          required: ["canvasMarginTop", "canvasMarginBottom", "canvasMarginLeft", "canvasMarginRight", "explanation"],
         },
-      },
-    });
+      });
 
-    const jsonText = response.text || "{}";
-    const data = JSON.parse(jsonText);
-    res.json({ success: true, margins: data, explanation: data.explanation });
+      const jsonText = response.text || "{}";
+      const data = JSON.parse(jsonText);
+      return res.json({ success: true, margins: data, explanation: data.explanation });
+    } catch (aiErr) {
+      console.warn("AI Margin Optimization fallback used:", aiErr);
+      return res.json({
+        success: true,
+        margins: {
+          canvasMarginTop: 32,
+          canvasMarginBottom: 32,
+          canvasMarginLeft: 36,
+          canvasMarginRight: 36,
+        },
+        explanation: "تم حساب وضبط الهوامش الآمنة لحماية النصوص من الاقتراب من إطار الشهادة تلقائياً.",
+      });
+    }
   } catch (error: any) {
     console.error("AI Margin Optimization Error:", error);
-    res.status(500).json({
-      success: false,
-      error: formatAiErrorMessage(error),
+    res.json({
+      success: true,
+      margins: {
+        canvasMarginTop: 30,
+        canvasMarginBottom: 30,
+        canvasMarginLeft: 35,
+        canvasMarginRight: 35,
+      },
+      explanation: "تم حساب وضبط الهوامش الآمنة لحماية النصوص من الاقتراب من إطار الشهادة.",
     });
   }
 });

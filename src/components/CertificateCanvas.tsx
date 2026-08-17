@@ -112,7 +112,7 @@ export const getCertificateGridLayout = (
           gridTemplateColumns: colDef,
           gridTemplateAreas: validation.formattedCss,
           alignContent: 'space-between',
-          gap: '8px',
+          gap: '14px',
           isSidebar: isStampsSidebar,
           isExecutive: false,
           stampsStyle: isStampsSidebar ? {
@@ -121,8 +121,8 @@ export const getCertificateGridLayout = (
             justifyContent: 'space-around',
             alignItems: 'center',
             height: '100%',
-            padding: '6px 2px',
-            gap: '8px',
+            padding: '8px 4px',
+            gap: '12px',
             width: '100%',
           } : {
             display: 'grid',
@@ -130,7 +130,7 @@ export const getCertificateGridLayout = (
             gridTemplateAreas: '"badge stamp footer"',
             alignItems: 'center',
             justifyItems: 'center',
-            gap: '6px',
+            gap: '10px',
             width: '100%',
           }
         };
@@ -148,7 +148,7 @@ export const getCertificateGridLayout = (
           "stamps signatures"
         `,
         alignContent: 'space-between',
-        gap: '8px',
+        gap: '14px',
         isSidebar: false,
         isExecutive: false,
         stampsStyle: {
@@ -157,7 +157,7 @@ export const getCertificateGridLayout = (
           gridTemplateAreas: '"badge stamp footer"',
           alignItems: 'center',
           justifyItems: 'center',
-          gap: '4px',
+          gap: '8px',
           width: '100%',
         }
       };
@@ -174,7 +174,7 @@ export const getCertificateGridLayout = (
           "stamps signatures"
         `,
         alignContent: 'space-between',
-        gap: '10px',
+        gap: '16px',
         isSidebar: false,
         isExecutive: false,
         stampsStyle: {
@@ -183,7 +183,7 @@ export const getCertificateGridLayout = (
           gridTemplateAreas: '"badge stamp footer"',
           alignItems: 'center',
           justifyItems: 'center',
-          gap: '4px',
+          gap: '8px',
           width: '100%',
         }
       };
@@ -200,7 +200,7 @@ export const getCertificateGridLayout = (
           "stamps signatures"
         `,
         alignContent: 'space-between',
-        gap: '14px',
+        gap: '18px',
         isSidebar: true,
         isExecutive: false,
         stampsStyle: {
@@ -209,9 +209,9 @@ export const getCertificateGridLayout = (
           justifyContent: 'space-around',
           alignItems: 'center',
           height: '100%',
-          padding: '8px 4px',
+          padding: '10px 6px',
           borderInlineEnd: '1.5px dashed rgba(217, 119, 6, 0.35)',
-          gap: '12px',
+          gap: '14px',
           width: '100%',
         }
       };
@@ -228,7 +228,7 @@ export const getCertificateGridLayout = (
           "signatures stamps"
         `,
         alignContent: 'space-between',
-        gap: '14px',
+        gap: '18px',
         isSidebar: true,
         isExecutive: false,
         stampsStyle: {
@@ -237,9 +237,9 @@ export const getCertificateGridLayout = (
           justifyContent: 'space-around',
           alignItems: 'center',
           height: '100%',
-          padding: '8px 4px',
+          padding: '10px 6px',
           borderInlineStart: '1.5px dashed rgba(217, 119, 6, 0.35)',
-          gap: '12px',
+          gap: '14px',
           width: '100%',
         }
       };
@@ -257,7 +257,7 @@ export const getCertificateGridLayout = (
           "signatures"
         `,
         alignContent: 'space-around',
-        gap: '8px',
+        gap: '16px',
         isSidebar: false,
         isExecutive: false,
         stampsStyle: {
@@ -266,7 +266,7 @@ export const getCertificateGridLayout = (
           gridTemplateAreas: '"badge stamp footer"',
           alignItems: 'center',
           justifyItems: 'center',
-          gap: '8px',
+          gap: '10px',
           width: '100%',
         }
       };
@@ -283,7 +283,7 @@ export const getCertificateGridLayout = (
           "signatures signatures"
         `,
         alignContent: 'space-between',
-        gap: '12px',
+        gap: '16px',
         isSidebar: false,
         isExecutive: true,
         stampsStyle: {
@@ -292,9 +292,9 @@ export const getCertificateGridLayout = (
           justifyContent: 'space-evenly',
           alignItems: 'center',
           height: '100%',
-          padding: '4px',
+          padding: '6px 4px',
           borderInlineStart: '1.5px dashed rgba(217, 119, 6, 0.3)',
-          gap: '8px',
+          gap: '10px',
           width: '100%',
         }
       };
@@ -312,7 +312,7 @@ export const getCertificateGridLayout = (
           "stamps"
         `,
         alignContent: 'space-between',
-        gap: '6px',
+        gap: '14px',
         isSidebar: false,
         isExecutive: false,
         stampsStyle: {
@@ -321,7 +321,7 @@ export const getCertificateGridLayout = (
           gridTemplateAreas: '"badge stamp footer"',
           alignItems: 'center',
           justifyItems: 'center',
-          gap: '8px',
+          gap: '10px',
           width: '100%',
         }
       };
@@ -340,7 +340,7 @@ export const getCertificateGridLayout = (
           "signatures"
         `,
         alignContent: 'space-between',
-        gap: '4px',
+        gap: '12px',
         isSidebar: false,
         isExecutive: false,
         stampsStyle: {
@@ -349,7 +349,7 @@ export const getCertificateGridLayout = (
           gridTemplateAreas: '"badge stamp footer"',
           alignItems: 'center',
           justifyItems: 'center',
-          gap: '4px',
+          gap: '8px',
           width: '100%',
         }
       };
@@ -2946,10 +2946,10 @@ export const CertificateCanvas: React.FC<Props> = ({
                     height: '100%',
                     width: '100%',
                     boxSizing: 'border-box',
-                    paddingTop: `${data.canvasMarginTop ?? 24}px`,
-                    paddingBottom: `${data.canvasMarginBottom ?? 24}px`,
-                    paddingLeft: `${data.canvasMarginLeft ?? 32}px`,
-                    paddingRight: `${data.canvasMarginRight ?? 32}px`,
+                    paddingTop: `${data.canvasMarginTop ?? 32}px`,
+                    paddingBottom: `${data.canvasMarginBottom ?? 30}px`,
+                    paddingLeft: `${data.canvasMarginLeft ?? 40}px`,
+                    paddingRight: `${data.canvasMarginRight ?? 40}px`,
                     alignContent: gridConfig.alignContent,
                   }}
                 >
@@ -3041,7 +3041,13 @@ export const CertificateCanvas: React.FC<Props> = ({
                             </div>
                           )}
                           {data.showHeaderRightExtra && (
-                            <div className={`w-full max-w-full break-words whitespace-pre-wrap ${headerAlignClass} ${getElementFontClass('schoolHeader')}`} style={schoolHeaderCss}>
+                            <div
+                              className={`w-full max-w-full break-words whitespace-pre-wrap transition-transform ${headerAlignClass} ${getElementFontClass('schoolHeader')}`}
+                              style={{
+                                ...schoolHeaderCss,
+                                transform: `translate(${data.headerRightExtraOffsetX || 0}px, ${data.headerRightExtraOffsetY || 0}px)`
+                              }}
+                            >
                               <InlineEdit
                                 value={data.headerRightExtra ?? 'مكتب التعليم الخاص'}
                                 onChange={(val) => handleFieldChange('headerRightExtra', val)}
@@ -3069,8 +3075,13 @@ export const CertificateCanvas: React.FC<Props> = ({
                             </div>
                           )}
                           {data.showHeaderVisionText && (
-                            <div className={`pt-0.5 max-w-full ${headerAlignClass}`}>
-                              <span className="text-[10px] font-bold text-amber-900 bg-amber-100/90 px-2 py-0.5 rounded border border-amber-300/80 inline-block max-w-full break-words">
+                            <div
+                              className={`pt-0.5 max-w-full transition-transform ${headerAlignClass}`}
+                              style={{
+                                transform: `translate(${data.headerVisionTextOffsetX || 0}px, ${data.headerVisionTextOffsetY || 0}px)`
+                              }}
+                            >
+                              <span className="text-[10px] font-bold text-amber-900 bg-amber-100/90 px-2 py-0.5 rounded border border-amber-300/80 inline-block max-w-full break-words shadow-xs">
                                 <InlineEdit
                                   value={data.headerVisionText ?? 'رؤية 2030'}
                                   onChange={(val) => handleFieldChange('headerVisionText', val)}
@@ -3086,10 +3097,10 @@ export const CertificateCanvas: React.FC<Props> = ({
                 </div>
 
                 {/* Institution Logo */}
-                <div style={{ gridArea: 'logo' }} className="flex justify-center items-center px-1 sm:px-2 shrink-0">
+                <div style={{ gridArea: 'logo' }} className="flex justify-center items-center px-1 sm:px-2 shrink-0 relative overflow-visible min-w-[50px]">
                   <DraggableItem elementKey="logo">
                     <div
-                      className="flex flex-col items-center shrink-0 transition-all duration-300"
+                      className="flex flex-col items-center justify-center shrink-0 transition-all duration-300 relative overflow-visible"
                       style={{
                         transform: `translate(${data.logoOffsetX || 0}px, ${data.logoOffsetY || 0}px) rotate(${data.logoRotation || 0}deg)`,
                         opacity: data.logoOpacity ?? 1,
@@ -3099,7 +3110,7 @@ export const CertificateCanvas: React.FC<Props> = ({
                         <img
                           src={data.logoUrl}
                           alt="Logo"
-                          className={`object-contain transition-all ${
+                          className={`object-contain transition-all max-w-none ${
                             data.logoBgMode === 'transparent' || data.logoShape === 'none'
                               ? 'bg-transparent border-0 shadow-none p-0'
                               : data.logoBgMode === 'dark'

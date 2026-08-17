@@ -626,10 +626,10 @@ export const EditorToolbar: React.FC<Props> = ({
 
   const handleSaveDefaultMargins = () => {
     const currentMargins = {
-      canvasMarginTop: certificateData.canvasMarginTop ?? 24,
-      canvasMarginBottom: certificateData.canvasMarginBottom ?? 24,
-      canvasMarginLeft: certificateData.canvasMarginLeft ?? 32,
-      canvasMarginRight: certificateData.canvasMarginRight ?? 32,
+      canvasMarginTop: certificateData.canvasMarginTop ?? 32,
+      canvasMarginBottom: certificateData.canvasMarginBottom ?? 30,
+      canvasMarginLeft: certificateData.canvasMarginLeft ?? 40,
+      canvasMarginRight: certificateData.canvasMarginRight ?? 40,
     };
     saveDefaultMargins(currentMargins);
     setMarginNotice('تم حفظ الهوامش الحالية كافتراضي بنجاح! ستطبق هذه الهوامش تلقائياً عند إنشاء أو إعادة ضبط الشهادات القادمة.');
@@ -692,17 +692,25 @@ export const EditorToolbar: React.FC<Props> = ({
     setAiTuneStatus('جاري تحليل ألوان وزخارف الخلفية بالذكاء الاصطناعي... ⏳');
 
     try {
-      const response = await fetch('/api/ai-tune-background', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          imageDataUrl: currentBg,
-          currentData: certificateData,
-        }),
-      });
+      let data: any = null;
+      try {
+        const response = await fetch('/api/ai-tune-background', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            imageDataUrl: currentBg,
+            currentData: certificateData,
+          }),
+        });
+        const text = await response.text();
+        if (text && (text.trim().startsWith('{') || text.trim().startsWith('['))) {
+          data = JSON.parse(text);
+        }
+      } catch (e) {
+        console.warn('ai-tune-background response parse error:', e);
+      }
 
-      const data = await response.json();
-      if (data.success && data.result) {
+      if (data && data.success && data.result) {
         const tuned = data.result;
         onChange({
           ...certificateData,
@@ -721,7 +729,7 @@ export const EditorToolbar: React.FC<Props> = ({
         setAiTuneStatus('✨ تم ضبط العبارات والألوان والتباين بالذكاء الاصطناعي بنجاح!');
         setTimeout(() => setAiTuneStatus(null), 4500);
       } else {
-        throw new Error(data.error || 'تعذر معالجة الصورة');
+        throw new Error(data?.error || 'تعذر معالجة الصورة');
       }
     } catch (err: any) {
       console.error('AI tune error:', err);
@@ -802,8 +810,17 @@ export const EditorToolbar: React.FC<Props> = ({
         }),
       });
 
-      const json = await response.json();
-      if (json.success && json.result) {
+      let json: any = null;
+      try {
+        const text = await response.text();
+        if (text && (text.trim().startsWith('{') || text.trim().startsWith('['))) {
+          json = JSON.parse(text);
+        }
+      } catch (parseErr) {
+        console.warn('Failed to parse gender AI JSON response:', parseErr);
+      }
+
+      if (json && json.success && json.result) {
         onChange({
           ...updated,
           ...json.result,
@@ -1573,47 +1590,109 @@ export const EditorToolbar: React.FC<Props> = ({
 
                     {/* Granular Line Movements */}
                     <div className="bg-white/80 p-2.5 rounded-xl border border-amber-200/70 space-y-2">
-                      <span className="text-[10px] font-bold text-slate-700 block">
-                        تحريك كل سطر في الترويسة بشكل منفصل:
-                      </span>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        <OffsetPad
-                          title="السطر 1 (المملكة)"
-                          subtitle="تحريك السطر الأول"
-                          offsetX={certificateData.headerLine1OffsetX || 0}
-                          offsetY={certificateData.headerLine1OffsetY || 0}
-                          onChangeX={(val) => updateField('headerLine1OffsetX', val)}
-                          onChangeY={(val) => updateField('headerLine1OffsetY', val)}
-                          onReset={() => onChange({ ...certificateData, headerLine1OffsetX: 0, headerLine1OffsetY: 0, updatedAt: new Date().toISOString() })}
-                        />
-                        <OffsetPad
-                          title="السطر 2 (الوزارة)"
-                          subtitle="تحريك السطر الثاني"
-                          offsetX={certificateData.headerLine2OffsetX || 0}
-                          offsetY={certificateData.headerLine2OffsetY || 0}
-                          onChangeX={(val) => updateField('headerLine2OffsetX', val)}
-                          onChangeY={(val) => updateField('headerLine2OffsetY', val)}
-                          onReset={() => onChange({ ...certificateData, headerLine2OffsetX: 0, headerLine2OffsetY: 0, updatedAt: new Date().toISOString() })}
-                        />
-                        <OffsetPad
-                          title="السطر 3 (الإدارة)"
-                          subtitle="تحريك السطر الثالث"
-                          offsetX={certificateData.headerLine3OffsetX || 0}
-                          offsetY={certificateData.headerLine3OffsetY || 0}
-                          onChangeX={(val) => updateField('headerLine3OffsetX', val)}
-                          onChangeY={(val) => updateField('headerLine3OffsetY', val)}
-                          onReset={() => onChange({ ...certificateData, headerLine3OffsetX: 0, headerLine3OffsetY: 0, updatedAt: new Date().toISOString() })}
-                        />
-                        <OffsetPad
-                          title="اسم المدرسة"
-                          subtitle="تحريك اسم المدرسة"
-                          offsetX={certificateData.headerSchoolNameOffsetX || 0}
-                          offsetY={certificateData.headerSchoolNameOffsetY || 0}
-                          onChangeX={(val) => updateField('headerSchoolNameOffsetX', val)}
-                          onChangeY={(val) => updateField('headerSchoolNameOffsetY', val)}
-                          onReset={() => onChange({ ...certificateData, headerSchoolNameOffsetX: 0, headerSchoolNameOffsetY: 0, updatedAt: new Date().toISOString() })}
-                        />
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold text-slate-700 block">
+                          تحريك كل سطر في الترويسة بشكل منفصل:
+                        </span>
+                        <span className="text-[9px] text-amber-800 bg-amber-100/80 px-1.5 py-0.5 rounded font-bold">
+                          تظهر حسب حالة السطر (ظاهر/مخفي)
+                        </span>
                       </div>
+
+                      {(() => {
+                        const showLine1 = certificateData.showHeaderLine1 ?? true;
+                        const showLine2 = certificateData.showHeaderLine2 ?? true;
+                        const showLine3 = certificateData.showHeaderLine3 ?? false;
+                        const showRightExtra = certificateData.showHeaderRightExtra ?? false;
+                        const showSchoolName = certificateData.showHeaderSchoolName ?? true;
+                        const showVisionText = certificateData.showHeaderVisionText ?? false;
+
+                        const hasAnyVisibleLine = showLine1 || showLine2 || showLine3 || showRightExtra || showSchoolName || showVisionText;
+
+                        if (!hasAnyVisibleLine) {
+                          return (
+                            <div className="p-2.5 bg-slate-50 border border-dashed border-slate-300 rounded-lg text-center text-[11px] text-slate-500 font-medium">
+                              جميع عناصر وسطور الترويسة مخفية حالياً. قم بتفعيل إظهار أحد السطور أعلاه لتظهر خيارات تحريكه هنا.
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {showLine1 && (
+                              <OffsetPad
+                                title="السطر 1 (المملكة)"
+                                subtitle="تحريك السطر الأول"
+                                offsetX={certificateData.headerLine1OffsetX || 0}
+                                offsetY={certificateData.headerLine1OffsetY || 0}
+                                onChangeX={(val) => updateField('headerLine1OffsetX', val)}
+                                onChangeY={(val) => updateField('headerLine1OffsetY', val)}
+                                onReset={() => onChange({ ...certificateData, headerLine1OffsetX: 0, headerLine1OffsetY: 0, updatedAt: new Date().toISOString() })}
+                              />
+                            )}
+
+                            {showLine2 && (
+                              <OffsetPad
+                                title="السطر 2 (الوزارة)"
+                                subtitle="تحريك السطر الثاني"
+                                offsetX={certificateData.headerLine2OffsetX || 0}
+                                offsetY={certificateData.headerLine2OffsetY || 0}
+                                onChangeX={(val) => updateField('headerLine2OffsetX', val)}
+                                onChangeY={(val) => updateField('headerLine2OffsetY', val)}
+                                onReset={() => onChange({ ...certificateData, headerLine2OffsetX: 0, headerLine2OffsetY: 0, updatedAt: new Date().toISOString() })}
+                              />
+                            )}
+
+                            {showLine3 && (
+                              <OffsetPad
+                                title="السطر 3 (الإدارة)"
+                                subtitle="تحريك السطر الثالث"
+                                offsetX={certificateData.headerLine3OffsetX || 0}
+                                offsetY={certificateData.headerLine3OffsetY || 0}
+                                onChangeX={(val) => updateField('headerLine3OffsetX', val)}
+                                onChangeY={(val) => updateField('headerLine3OffsetY', val)}
+                                onReset={() => onChange({ ...certificateData, headerLine3OffsetX: 0, headerLine3OffsetY: 0, updatedAt: new Date().toISOString() })}
+                              />
+                            )}
+
+                            {showRightExtra && (
+                              <OffsetPad
+                                title="سطر إضافي يمين"
+                                subtitle="تحريك السطر الإضافي"
+                                offsetX={certificateData.headerRightExtraOffsetX || 0}
+                                offsetY={certificateData.headerRightExtraOffsetY || 0}
+                                onChangeX={(val) => updateField('headerRightExtraOffsetX', val)}
+                                onChangeY={(val) => updateField('headerRightExtraOffsetY', val)}
+                                onReset={() => onChange({ ...certificateData, headerRightExtraOffsetX: 0, headerRightExtraOffsetY: 0, updatedAt: new Date().toISOString() })}
+                              />
+                            )}
+
+                            {showSchoolName && (
+                              <OffsetPad
+                                title="اسم المدرسة / الجهة"
+                                subtitle="تحريك اسم المدرسة"
+                                offsetX={certificateData.headerSchoolNameOffsetX || 0}
+                                offsetY={certificateData.headerSchoolNameOffsetY || 0}
+                                onChangeX={(val) => updateField('headerSchoolNameOffsetX', val)}
+                                onChangeY={(val) => updateField('headerSchoolNameOffsetY', val)}
+                                onReset={() => onChange({ ...certificateData, headerSchoolNameOffsetX: 0, headerSchoolNameOffsetY: 0, updatedAt: new Date().toISOString() })}
+                              />
+                            )}
+
+                            {showVisionText && (
+                              <OffsetPad
+                                title="شعار الرؤية / عبارة هامش"
+                                subtitle="تحريك عبارة الرؤية والهامش"
+                                offsetX={certificateData.headerVisionTextOffsetX || 0}
+                                offsetY={certificateData.headerVisionTextOffsetY || 0}
+                                onChangeX={(val) => updateField('headerVisionTextOffsetX', val)}
+                                onChangeY={(val) => updateField('headerVisionTextOffsetY', val)}
+                                onReset={() => onChange({ ...certificateData, headerVisionTextOffsetX: 0, headerVisionTextOffsetY: 0, updatedAt: new Date().toISOString() })}
+                              />
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                 </div>
@@ -3610,7 +3689,7 @@ export const EditorToolbar: React.FC<Props> = ({
 
                         <div className="flex items-center gap-2">
                           <span className="text-[10px] text-slate-600 font-mono font-bold bg-slate-100 px-2 py-0.5 rounded">
-                            {certificateData.canvasMarginTop ?? 24}px / {certificateData.canvasMarginLeft ?? 32}px
+                            {certificateData.canvasMarginTop ?? 32}px / {certificateData.canvasMarginLeft ?? 40}px
                           </span>
                           <ChevronDown className={`w-4 h-4 text-slate-600 transition-transform duration-200 ${isSafeMarginsSpacingSubOpen ? 'rotate-180' : ''}`} />
                         </div>
@@ -3622,14 +3701,14 @@ export const EditorToolbar: React.FC<Props> = ({
                             <div>
                               <div className="flex justify-between items-center mb-0.5">
                                 <span className="text-[10px] font-bold text-slate-700">الهامش العلوي:</span>
-                                <span className="text-[10px] font-mono text-amber-800 font-bold">{certificateData.canvasMarginTop ?? 24}px</span>
+                                <span className="text-[10px] font-mono text-amber-800 font-bold">{certificateData.canvasMarginTop ?? 32}px</span>
                               </div>
                               <input
                                 type="range"
                                 min="0"
                                 max="60"
                                 step="2"
-                                value={certificateData.canvasMarginTop ?? 24}
+                                value={certificateData.canvasMarginTop ?? 32}
                                 onChange={(e) => updateField('canvasMarginTop', parseInt(e.target.value))}
                                 className="w-full accent-amber-600 h-1.5"
                               />
@@ -3638,14 +3717,14 @@ export const EditorToolbar: React.FC<Props> = ({
                             <div>
                               <div className="flex justify-between items-center mb-0.5">
                                 <span className="text-[10px] font-bold text-slate-700">الهامش السفلي:</span>
-                                <span className="text-[10px] font-mono text-amber-800 font-bold">{certificateData.canvasMarginBottom ?? 24}px</span>
+                                <span className="text-[10px] font-mono text-amber-800 font-bold">{certificateData.canvasMarginBottom ?? 30}px</span>
                               </div>
                               <input
                                 type="range"
                                 min="0"
                                 max="60"
                                 step="2"
-                                value={certificateData.canvasMarginBottom ?? 24}
+                                value={certificateData.canvasMarginBottom ?? 30}
                                 onChange={(e) => updateField('canvasMarginBottom', parseInt(e.target.value))}
                                 className="w-full accent-amber-600 h-1.5"
                               />
@@ -3654,14 +3733,14 @@ export const EditorToolbar: React.FC<Props> = ({
                             <div>
                               <div className="flex justify-between items-center mb-0.5">
                                 <span className="text-[10px] font-bold text-slate-700">الهامش الأيمن:</span>
-                                <span className="text-[10px] font-mono text-amber-800 font-bold">{certificateData.canvasMarginRight ?? 32}px</span>
+                                <span className="text-[10px] font-mono text-amber-800 font-bold">{certificateData.canvasMarginRight ?? 40}px</span>
                               </div>
                               <input
                                 type="range"
                                 min="0"
                                 max="80"
                                 step="2"
-                                value={certificateData.canvasMarginRight ?? 32}
+                                value={certificateData.canvasMarginRight ?? 40}
                                 onChange={(e) => updateField('canvasMarginRight', parseInt(e.target.value))}
                                 className="w-full accent-amber-600 h-1.5"
                               />
@@ -3670,14 +3749,14 @@ export const EditorToolbar: React.FC<Props> = ({
                             <div>
                               <div className="flex justify-between items-center mb-0.5">
                                 <span className="text-[10px] font-bold text-slate-700">الهامش الأيسر:</span>
-                                <span className="text-[10px] font-mono text-amber-800 font-bold">{certificateData.canvasMarginLeft ?? 32}px</span>
+                                <span className="text-[10px] font-mono text-amber-800 font-bold">{certificateData.canvasMarginLeft ?? 40}px</span>
                               </div>
                               <input
                                 type="range"
                                 min="0"
                                 max="80"
                                 step="2"
-                                value={certificateData.canvasMarginLeft ?? 32}
+                                value={certificateData.canvasMarginLeft ?? 40}
                                 onChange={(e) => updateField('canvasMarginLeft', parseInt(e.target.value))}
                                 className="w-full accent-amber-600 h-1.5"
                               />
@@ -4895,29 +4974,31 @@ export const EditorToolbar: React.FC<Props> = ({
                   </div>
 
                   {/* 2. Logo Size (Presets + Custom Pixel Slider) */}
-                  <div className="space-y-1.5 bg-white p-2.5 rounded-lg border border-slate-200">
-                    <div className="flex items-center justify-between">
+                  <div className="space-y-2 bg-white p-2.5 rounded-lg border border-slate-200">
+                    <div className="flex items-center justify-between flex-wrap gap-1">
                       <span className="text-[11px] font-bold text-slate-700">حجم الشعار:</span>
-                      <div className="flex gap-1">
+                      <div className="flex flex-wrap gap-1">
                         {[
-                          { id: 'sm', label: 'صغير', px: 36 },
-                          { id: 'md', label: 'متوسط', px: 48 },
-                          { id: 'lg', label: 'كبير', px: 64 },
-                          { id: 'xl', label: 'ضخم', px: 80 }
+                          { id: 'sm', label: 'صغير (36px)', px: 36 },
+                          { id: 'md', label: 'متوسط (48px)', px: 48 },
+                          { id: 'lg', label: 'كبير (64px)', px: 64 },
+                          { id: 'xl', label: 'كبير جداً (80px)', px: 80 },
+                          { id: '2xl', label: 'ضخم (110px)', px: 110 },
+                          { id: '3xl', label: 'عملاق (150px)', px: 150 },
                         ].map((sz) => (
                           <button
                             key={sz.id}
                             type="button"
                             onClick={() => onChange({
                               ...certificateData,
-                              logoSize: sz.id as any,
+                              logoSize: (sz.id === '2xl' || sz.id === '3xl') ? 'xl' : (sz.id as any),
                               logoSizePx: sz.px,
                               updatedAt: new Date().toISOString()
                             })}
-                            className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
-                              (certificateData.logoSize || 'md') === sz.id && (!certificateData.logoSizePx || certificateData.logoSizePx === sz.px)
-                                ? 'bg-amber-500 text-slate-950 border-amber-600'
-                                : 'bg-slate-50 text-slate-700 border-slate-300'
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold border transition ${
+                              certificateData.logoSizePx === sz.px || (!certificateData.logoSizePx && (certificateData.logoSize || 'md') === sz.id)
+                                ? 'bg-amber-500 text-slate-950 border-amber-600 shadow-2xs'
+                                : 'bg-slate-50 text-slate-700 border-slate-300 hover:bg-slate-100'
                             }`}
                           >
                             {sz.label}
@@ -4926,19 +5007,45 @@ export const EditorToolbar: React.FC<Props> = ({
                       </div>
                     </div>
 
-                    <div className="pt-1">
-                      <div className="flex justify-between text-[10px] font-bold text-slate-600 mb-1">
-                        <span>تحكم دقيق بالحجم بالبكسل:</span>
-                        <span className="font-mono text-amber-800">{certificateData.logoSizePx || 48}px</span>
+                    <div className="pt-1 bg-slate-50/80 p-2 rounded-lg border border-slate-200/80 space-y-1.5">
+                      <div className="flex justify-between items-center text-[10px] font-bold text-slate-700">
+                        <span>تكبير وتصغير دقيق بالبكسل:</span>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => updateField('logoSizePx', Math.max(20, (certificateData.logoSizePx || 48) - 5))}
+                            className="w-5 h-5 bg-white border border-slate-300 rounded font-bold text-slate-700 hover:bg-amber-50 flex items-center justify-center text-xs"
+                            title="تصغير 5 بكسل"
+                          >
+                            -
+                          </button>
+                          <span className="font-mono font-bold text-amber-900 bg-amber-100/90 px-2 py-0.5 rounded border border-amber-300">
+                            {certificateData.logoSizePx || 48}px
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => updateField('logoSizePx', Math.min(280, (certificateData.logoSizePx || 48) + 5))}
+                            className="w-5 h-5 bg-white border border-slate-300 rounded font-bold text-slate-700 hover:bg-amber-50 flex items-center justify-center text-xs"
+                            title="تكبير 5 بكسل"
+                          >
+                            +
+                          </button>
+                        </div>
                       </div>
                       <input
                         type="range"
                         min="20"
-                        max="200"
+                        max="280"
+                        step="2"
                         value={certificateData.logoSizePx || 48}
                         onChange={(e) => updateField('logoSizePx', parseInt(e.target.value))}
-                        className="w-full accent-amber-600 cursor-pointer"
+                        className="w-full accent-amber-600 cursor-pointer h-2"
                       />
+                      <div className="flex justify-between text-[9px] text-slate-400 font-mono">
+                        <span>20px (أصغر مقاس)</span>
+                        <span>140px</span>
+                        <span>280px (أكبر مقاس)</span>
+                      </div>
                     </div>
                   </div>
 
@@ -5395,9 +5502,9 @@ export const EditorToolbar: React.FC<Props> = ({
               {/* Quick Presets */}
               <div className="grid grid-cols-4 gap-1.5 pt-0.5">
                 {[
-                  { label: 'قياسي', top: 24, bottom: 24, left: 32, right: 32 },
-                  { label: 'ضيّق', top: 12, bottom: 12, left: 16, right: 16 },
-                  { label: 'واسع', top: 40, bottom: 40, left: 48, right: 48 },
+                  { label: 'قياسي', top: 32, bottom: 30, left: 40, right: 40 },
+                  { label: 'ضيّق', top: 18, bottom: 18, left: 24, right: 24 },
+                  { label: 'واسع', top: 48, bottom: 46, left: 56, right: 56 },
                   { label: 'معدوم', top: 0, bottom: 0, left: 0, right: 0 },
                 ].map((preset, idx) => (
                   <button
@@ -5424,7 +5531,7 @@ export const EditorToolbar: React.FC<Props> = ({
                   <div className="flex justify-between items-center mb-1">
                     <label className="text-[11px] font-bold text-slate-700">الهامش العلوي</label>
                     <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded">
-                      {certificateData.canvasMarginTop ?? 24}px
+                      {certificateData.canvasMarginTop ?? 32}px
                     </span>
                   </div>
                   <input
@@ -5432,7 +5539,7 @@ export const EditorToolbar: React.FC<Props> = ({
                     min="0"
                     max="80"
                     step="2"
-                    value={certificateData.canvasMarginTop ?? 24}
+                    value={certificateData.canvasMarginTop ?? 32}
                     onChange={(e) => updateField('canvasMarginTop', parseInt(e.target.value))}
                     className="w-full accent-amber-600 cursor-pointer"
                   />
@@ -5442,7 +5549,7 @@ export const EditorToolbar: React.FC<Props> = ({
                   <div className="flex justify-between items-center mb-1">
                     <label className="text-[11px] font-bold text-slate-700">الهامش السفلي</label>
                     <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded">
-                      {certificateData.canvasMarginBottom ?? 24}px
+                      {certificateData.canvasMarginBottom ?? 30}px
                     </span>
                   </div>
                   <input
@@ -5450,7 +5557,7 @@ export const EditorToolbar: React.FC<Props> = ({
                     min="0"
                     max="80"
                     step="2"
-                    value={certificateData.canvasMarginBottom ?? 24}
+                    value={certificateData.canvasMarginBottom ?? 30}
                     onChange={(e) => updateField('canvasMarginBottom', parseInt(e.target.value))}
                     className="w-full accent-amber-600 cursor-pointer"
                   />
@@ -5460,7 +5567,7 @@ export const EditorToolbar: React.FC<Props> = ({
                   <div className="flex justify-between items-center mb-1">
                     <label className="text-[11px] font-bold text-slate-700">الهامش الأيمن</label>
                     <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded">
-                      {certificateData.canvasMarginRight ?? 32}px
+                      {certificateData.canvasMarginRight ?? 40}px
                     </span>
                   </div>
                   <input
@@ -5468,7 +5575,7 @@ export const EditorToolbar: React.FC<Props> = ({
                     min="0"
                     max="80"
                     step="2"
-                    value={certificateData.canvasMarginRight ?? 32}
+                    value={certificateData.canvasMarginRight ?? 40}
                     onChange={(e) => updateField('canvasMarginRight', parseInt(e.target.value))}
                     className="w-full accent-amber-600 cursor-pointer"
                   />
@@ -5478,7 +5585,7 @@ export const EditorToolbar: React.FC<Props> = ({
                   <div className="flex justify-between items-center mb-1">
                     <label className="text-[11px] font-bold text-slate-700">الهامش الأيسر</label>
                     <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded">
-                      {certificateData.canvasMarginLeft ?? 32}px
+                      {certificateData.canvasMarginLeft ?? 40}px
                     </span>
                   </div>
                   <input
@@ -5486,7 +5593,7 @@ export const EditorToolbar: React.FC<Props> = ({
                     min="0"
                     max="80"
                     step="2"
-                    value={certificateData.canvasMarginLeft ?? 32}
+                    value={certificateData.canvasMarginLeft ?? 40}
                     onChange={(e) => updateField('canvasMarginLeft', parseInt(e.target.value))}
                     className="w-full accent-amber-600 cursor-pointer"
                   />

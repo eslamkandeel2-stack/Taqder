@@ -10,10 +10,10 @@ export interface MarginSet {
 const STORAGE_KEY = 'taqdeer_default_margins';
 
 export const SYSTEM_DEFAULT_MARGINS: MarginSet = {
-  canvasMarginTop: 24,
-  canvasMarginBottom: 24,
-  canvasMarginLeft: 32,
-  canvasMarginRight: 32,
+  canvasMarginTop: 32,
+  canvasMarginBottom: 30,
+  canvasMarginLeft: 40,
+  canvasMarginRight: 40,
 };
 
 /**
@@ -88,12 +88,12 @@ export function calculateSafeMargins(certData: Partial<CertificateData>): {
     safeSide += 4;
   }
 
-  // Clamp margins to reasonable limits (minimum 20px, maximum 80px)
+  // Clamp margins to reasonable limits (minimum 28px, maximum 80px)
   const margins: MarginSet = {
-    canvasMarginTop: Math.min(80, Math.max(20, Math.round(safeSide + topExtra))),
-    canvasMarginBottom: Math.min(80, Math.max(20, Math.round(safeSide + bottomExtra))),
-    canvasMarginLeft: Math.min(80, Math.max(20, Math.round(safeSide))),
-    canvasMarginRight: Math.min(80, Math.max(20, Math.round(safeSide))),
+    canvasMarginTop: Math.min(80, Math.max(30, Math.round(safeSide + topExtra))),
+    canvasMarginBottom: Math.min(80, Math.max(28, Math.round(safeSide + bottomExtra))),
+    canvasMarginLeft: Math.min(80, Math.max(36, Math.round(safeSide))),
+    canvasMarginRight: Math.min(80, Math.max(36, Math.round(safeSide))),
   };
 
   const frameNameArabic = getFrameStyleArabicName(frameStyle);

@@ -259,3 +259,50 @@ export function adaptCertificateGender(
     grade: convertArabicTextGender(data.grade || '', newGender),
   };
 }
+
+/**
+ * Robust local fallback generator for certificate content when offline or AI server responds with non-JSON
+ */
+export function generateLocalCertificateFallback(params: {
+  studentName?: string;
+  subject?: string;
+  achievement?: string;
+  grade?: string;
+  tone?: string;
+  schoolName?: string;
+  teacherName?: string;
+  recipientGender?: RecipientGender;
+}) {
+  const isFemale = params.recipientGender === 'female';
+  const subject = params.subject || 'التفوق العام';
+  const achievement = params.achievement || 'الاجتهاد والسلوك المتميز والتفوق الدراسي';
+
+  const poems = isFemale
+    ? [
+        'العِلْمُ يَرْفَعُ بَيْتًا لا عِمَادَ لَهُ ... وَالجَهْلُ يَهْدِمُ بَيْتَ العِزِّ وَالشَّرَفِ',
+        'يا شُعْلَةَ العِلْمِ يَا رَمْزَ الفَخَارِ سَمَتْ ... بِكِ المَعَالِي وَنِلْتِ العِزَّ وَالشَّرَفَا',
+        'مَنْ طَلَبَ العُلَى سَهِرَ اللَّيَالِي ... وَنَالَ المَجْدَ فِي خَيْرِ المَنَالِ',
+      ]
+    : [
+        'العِلْمُ يَرْفَعُ بَيْتًا لا عِمَادَ لَهُ ... وَالجَهْلُ يَهْدِمُ بَيْتَ العِزِّ وَالشَّرَفِ',
+        'يا كَوْكَبَ المَجْدِ وَالإِبْدَاعِ مُؤْتَلِقًا ... نِلْتَ المَعَالِيَ إِقْدَامًا وَإِتْقَانَا',
+        'مَنْ طَلَبَ العُلَى سَهِرَ اللَّيَالِي ... وَنَالَ المَجْدَ فِي خَيْرِ المَنَالِ',
+      ];
+
+  const appreciation = isFemale
+    ? `تقديراً لجهودها المتميزة وتفوقها المشهود في ${subject}، وإبداعها المستمر في ${achievement}، سائلين المولى لها دوام التوفيق والتألق والنجاح في مسيرتها التعليمية المباركة.`
+    : `تقديراً لجهوده المتميزة وتفوقه المشهود في ${subject}، وإبداعه المستمر في ${achievement}، سائلين المولى له دوام التوفيق والتألق والنجاح في مسيرته التعليمية المباركة.`;
+
+  return {
+    title: isFemale ? 'شهادة شكر وتقدير وتفوق' : 'شهادة شكر وتقدير وتفوق',
+    recipientIntro: isFemale
+      ? 'تسر إدارة المدرسة ومعلموها أن تمنح هذه الشهادة للطالبة المتميزة:'
+      : 'تسر إدارة المدرسة ومعلموها أن تمنح هذه الشهادة للطالب المتميز:',
+    appreciationText: appreciation,
+    poemOrQuote: poems[Math.floor(Math.random() * poems.length)],
+    badgeTitle: isFemale ? 'وسام التميز والتفوق' : 'وسام التميز والتفوق',
+    primaryColorHex: '#854d0e',
+    secondaryColorHex: '#d97706',
+  };
+}
+

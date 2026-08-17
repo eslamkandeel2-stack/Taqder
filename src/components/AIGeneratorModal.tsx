@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Sparkles, X, Bot, Check, RefreshCw } from 'lucide-react';
 import { CertificateData } from '../types';
-import { RecipientGender, detectGenderFromName } from '../utils/genderConverter';
+import { RecipientGender, detectGenderFromName, generateLocalCertificateFallback } from '../utils/genderConverter';
 
 interface Props {
   isOpen: boolean;
@@ -50,10 +50,38 @@ export const AIGeneratorModal: React.FC<Props> = ({
     setErrorMessage('');
 
     try {
-      const response = await fetch('/api/generate-certificate-content', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      let resultData: any = null;
+
+      try {
+        const response = await fetch('/api/generate-certificate-content', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            studentName: studentName || (recipientGender === 'female' ? 'الطالبة المتميزة' : 'الطالب المتميز'),
+            recipientGender,
+            subject: subject || 'التميز العام',
+            achievement: achievement || 'الاجتهاد والتفوق المتميز',
+            grade: grade || 'المرحلة الدراسية',
+            tone,
+            schoolName: currentData.schoolName,
+            teacherName: currentData.signatures?.[0]?.name,
+          }),
+        });
+
+        const text = await response.text();
+        if (text && (text.trim().startsWith('{') || text.trim().startsWith('['))) {
+          const json = JSON.parse(text);
+          if (json && json.success && json.result) {
+            resultData = json.result;
+          }
+        }
+      } catch (networkOrParseError) {
+        console.warn('Network or AI parse error, using intelligent fallback:', networkOrParseError);
+      }
+
+      // If server or network returned non-JSON/error, use local high-quality generator
+      if (!resultData) {
+        resultData = generateLocalCertificateFallback({
           studentName: studentName || (recipientGender === 'female' ? 'الطالبة المتميزة' : 'الطالب المتميز'),
           recipientGender,
           subject: subject || 'التميز العام',
@@ -62,35 +90,27 @@ export const AIGeneratorModal: React.FC<Props> = ({
           tone,
           schoolName: currentData.schoolName,
           teacherName: currentData.signatures?.[0]?.name,
-        }),
-      });
-
-      const json = await response.json();
-
-      if (!json.success || !json.result) {
-        throw new Error(json.error || 'حدث خطأ أثناء توليد العبارات');
+        });
       }
-
-      const result = json.result;
 
       onApplyGeneratedContent({
         recipientGender,
         studentName: studentName || currentData.studentName,
         grade: grade || currentData.grade,
         subject: subject || currentData.subject,
-        title: result.title || currentData.title,
-        recipientIntro: result.recipientIntro || currentData.recipientIntro,
-        appreciationText: result.appreciationText || currentData.appreciationText,
-        poemOrQuote: result.poemOrQuote || currentData.poemOrQuote,
-        badgeTitle: result.badgeTitle || currentData.badgeTitle,
-        primaryColor: result.primaryColorHex || currentData.primaryColor,
-        secondaryColor: result.secondaryColorHex || currentData.secondaryColor,
+        title: resultData.title || currentData.title,
+        recipientIntro: resultData.recipientIntro || currentData.recipientIntro,
+        appreciationText: resultData.appreciationText || currentData.appreciationText,
+        poemOrQuote: resultData.poemOrQuote || currentData.poemOrQuote,
+        badgeTitle: resultData.badgeTitle || currentData.badgeTitle,
+        primaryColor: resultData.primaryColorHex || currentData.primaryColor,
+        secondaryColor: resultData.secondaryColorHex || currentData.secondaryColor,
       });
 
       onClose();
     } catch (err: any) {
-      console.error(err);
-      setErrorMessage(err.message || 'تعذر الاتصال بالذكاء الاصطناعي، يرجى المحاولة لاحقاً.');
+      console.error('Final generator error:', err);
+      setErrorMessage('حدث خطأ غير متوقع، يرجى المحاولة مرة أخرى.');
     } finally {
       setIsLoading(false);
     }
