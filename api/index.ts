@@ -1,7 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { GoogleGenAI } from '@google/genai';
 
-// إعداد خيارات CORS للسماح بالاتصال من الواجهة الأمامية
+// إعداد خيارات CORS
 function setCorsHeaders(res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -12,7 +11,7 @@ function setCorsHeaders(res: VercelResponse) {
   );
 }
 
-// استخراج مفتاح API والبيانات بأمان
+// استخراج بيانات الطلب
 function extractAiCredentials(req: VercelRequest) {
   let bodyData = req.body;
   if (typeof req.body === 'string' && req.body.trim() !== '') {
@@ -34,16 +33,38 @@ function extractAiCredentials(req: VercelRequest) {
   return { apiKey, model, bodyData };
 }
 
-// تهيئة عميل GoogleGenAI بدون httpOptions أو Headers إضافية
-function getGenAI(customApiKey?: string) {
-  const apiKey = (customApiKey || process.env.GEMINI_API_KEY || '').trim();
-  if (!apiKey) {
-    throw new Error('لم يتم العثور على مفتاح GEMINI_API_KEY صالح.');
+// دالة الاتصال المباشر بـ REST API بدون استخدام SDK
+async function callGeminiDirectly(apiKey: string, model: string, prompt: string, isJson: boolean = false) {
+  // يوضع المفتاح كـ Parameter في نهاية الرابط حصراً لضمان عدم إرسال Authorization: Bearer
+  const cleanModel = model.startsWith('gemini-') ? model : 'gemini-2.0-flash';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${cleanModel}:generateContent?key=${apiKey}`;
+
+  const payload: any = {
+    contents: [{ parts: [{ text: prompt }] }],
+  };
+
+  if (isJson) {
+    payload.generationConfig = { responseMimeType: 'application/json' };
   }
-  return new GoogleGenAI({ apiKey });
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data?.error?.message || 'فشل الاتصال بـ Gemini API');
+  }
+
+  const outputText = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  return outputText;
 }
 
-// الدالة الرئيسية المستضيفة لجميع المسارات على Vercel
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   setCorsHeaders(res);
 
@@ -57,43 +78,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const { apiKey, model, bodyData } = extractAiCredentials(req);
 
-    // 1. اختبار وفحص الاتصال بالـ API
-    if (pathname === '/test-ai-connection' || pathname === '/test-ai-connection/' || pathname === '/check') {
-      const ai = getGenAI(apiKey);
-      const targetModel = model || 'gemini-2.0-flash';
+    if (!apiKey) {
+      return res.status(400).json({ success: false, error: 'يرجى إدخال مفتاح API Key صالح' });
+    }
 
-      const response = await ai.models.generateContent({
-        model: targetModel,
-        contents: "اختبار اتصال سريع: قل 'متصل بنجاح' فقط.",
-      });
+    // 1. اختبار وفحص الاتصال
+    if (pathname === '/test-ai-connection' || pathname === '/test-ai-connection/' || pathname === '/check') {
+      const resultText = await callGeminiDirectly(
+        apiKey,
+        model,
+        "اختبار اتصال سريع: قل 'متصل بنجاح' فقط."
+      );
 
       return res.status(200).json({
         success: true,
-        modelUsed: targetModel,
-        sampleResponse: response.text?.trim() || 'متصل بنجاح',
+        modelUsed: model || 'gemini-2.0-flash',
+        sampleResponse: resultText.trim(),
         message: `تم الاتصال بنموذج الذكاء الاصطناعي بنجاح! 🟢`,
       });
     }
 
-    // 2. توليد محتوى شهادات التقدير
+    // 2. توليد محتوى الشهادات
     if (pathname === '/generate-certificate-content') {
       const { studentName, subject, recipientGender } = bodyData || {};
       const isFemale = recipientGender === 'female';
-      const ai = getGenAI(apiKey);
-      const targetModel = model || 'gemini-2.0-flash';
 
-      const prompt = `أنت خبير صياغة شهادات تقدير. أرجِع JSON يحتوي على: title, recipientIntro, appreciationText, poemOrQuote, badgeTitle لتكريم ${isFemale ? 'طالبة' : 'طالب'} اسمه/ا ${studentName || ''} في مادة ${subject || 'التفوق العام'}.`;
+      const prompt = `أنت خبير صياغة شهادات تقدير. أرجِع JSON فقط يحتوي على الحقول: title, recipientIntro, appreciationText, poemOrQuote, badgeTitle لتكريم ${isFemale ? 'طالبة' : 'طالب'} اسمه/ا ${studentName || ''} في مادة ${subject || 'التفوق العام'}.`;
 
-      const response = await ai.models.generateContent({
-        model: targetModel,
-        contents: prompt,
-        config: { responseMimeType: 'application/json' },
-      });
+      const resultText = await callGeminiDirectly(apiKey, model, prompt, true);
 
-      return res.status(200).json({ success: true, result: JSON.parse(response.text || '{}') });
+      return res.status(200).json({ success: true, result: JSON.parse(resultText || '{}') });
     }
 
-    // المسار الرئيسي للتحقق من عمل السيرفر
     if (pathname === '' || pathname === '/') {
       return res.status(200).json({ status: 'ok', message: 'Vercel Serverless API is active' });
     }
