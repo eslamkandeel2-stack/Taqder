@@ -44,8 +44,10 @@ export function convertArabicTextGender(text: string, targetGender: RecipientGen
     result = result.replace(/المتطوع[\/ـ_-]+ـة/g, 'المتطوعة');
     result = result.replace(/طالب[\/ـ_-]+ـة/g, 'طالبة');
 
-    // Specific Multi-word Phrases (Male -> Female)
+    // Specific Multi-word Phrases & Pronouns (Male -> Female)
     const phraseMapFemale: [RegExp, string][] = [
+      [/\bعبد الله بن\b/g, 'فاطمة بنت'],
+      [/\bبن\b/g, 'بنت'],
       [/\bللطالب المبدع\b/g, 'للطالبة المبدعة'],
       [/\bللطالب الخلوق\b/g, 'للطالبة الخلوقة'],
       [/\bللطالب المبارك\b/g, 'للطالبة المباركة'],
@@ -80,6 +82,7 @@ export function convertArabicTextGender(text: string, targetGender: RecipientGen
       [/\bشكرًا لك يا نجمنا\b/g, 'شكرًا لكِ يا نجمتنا'],
       [/\bنتمنى له\b/g, 'نتمنى لها'],
       [/\bنتمنى لَه\b/g, 'نتمنى لها'],
+      [/\bله دوام\b/g, 'لها دوام'],
       [/\bلسلوكه\b/g, 'لسلوكها'],
       [/\bزملائه\b/g, 'زميلاتها'],
       [/\bمعلميه\b/g, 'معلماتها'],
@@ -102,11 +105,16 @@ export function convertArabicTextGender(text: string, targetGender: RecipientGen
       [/\bتخلقه\b/g, 'تخلقها'],
       [/\bأدائه\b/g, 'أدائها'],
       [/\bإنجازه\b/g, 'إنجازها'],
-      [/\bتفرده\b/g, 'تفردها'],
+      [/\bتفردها\b/g, 'تفردها'],
       [/\bسلوكه\b/g, 'سلوكها'],
       [/\bتعاونه\b/g, 'تعاونها'],
       [/\bحفظه\b/g, 'حفظها'],
       [/\bفريقه\b/g, 'فريقها'],
+      [/\bمسيرته\b/g, 'مسيرتها'],
+      [/\bعلماء\b/g, 'علمها'],
+      [/\bانضباطه\b/g, 'انضباطها'],
+      [/\bتفوقه\b/g, 'تفوقها'],
+      [/\bيزيده\b/g, 'يزيدها'],
       [/\bمترتبة على اجتهاده\b/g, 'مترتبة على اجتهادها'],
       [/\bاجتهاده\b/g, 'اجتهادها'],
       [/\bالذي يجسد\b/g, 'التي تجسد'],
@@ -122,6 +130,10 @@ export function convertArabicTextGender(text: string, targetGender: RecipientGen
       [/\bمنحه\b/g, 'منحها'],
       [/\bللطالب\b/g, 'للطالبة'],
       [/\bالطالب\b/g, 'الطالبة'],
+      [/\bطالب\b/g, 'طالبة'],
+      [/\bالمتميز\b/g, 'المتميزة'],
+      [/\bالمتفوق\b/g, 'المتفوقة'],
+      [/\bالنجيب\b/g, 'النجيبة'],
     ];
 
     for (const [regex, replacement] of phraseMapFemale) {
@@ -139,8 +151,9 @@ export function convertArabicTextGender(text: string, targetGender: RecipientGen
     result = result.replace(/المتطوع[\/ـ_-]+ـة/g, 'المتطوع');
     result = result.replace(/طالب[\/ـ_-]+ـة/g, 'طالب');
 
-    // Specific Multi-word Phrases (Female -> Male)
+    // Specific Multi-word Phrases & Pronouns (Female -> Male)
     const phraseMapMale: [RegExp, string][] = [
+      [/\bبنت\b/g, 'بن'],
       [/\bللطالبة المبدعة\b/g, 'للطالب المبدع'],
       [/\bللطالبة الخلوقة\b/g, 'للطالب الخلوق'],
       [/\bللطالبة المباركة\b/g, 'للطالب المبارك'],
@@ -175,6 +188,7 @@ export function convertArabicTextGender(text: string, targetGender: RecipientGen
       [/\bشكرًا لكِ يا نجمتنا\b/g, 'شكرًا لك يا نجمنا'],
       [/\bنتمنى لها\b/g, 'نتمنى له'],
       [/\bنتمنى لَها\b/g, 'نتمنى له'],
+      [/\bلها دوام\b/g, 'له دوام'],
       [/\bلسلوكها\b/g, 'لسلوكه'],
       [/\bزميلاتها\b/g, 'زملائه'],
       [/\bمعلماتها\b/g, 'معلميه'],
@@ -203,6 +217,11 @@ export function convertArabicTextGender(text: string, targetGender: RecipientGen
       [/\bحفظها\b/g, 'حفظه'],
       [/\bفريقها\b/g, 'فريقه'],
       [/\bاجتهادها\b/g, 'اجتهاده'],
+      [/\bمسيرتها\b/g, 'مسيرته'],
+      [/\bعلمها\b/g, 'علمها'],
+      [/\bانضباطها\b/g, 'انضباطه'],
+      [/\bتفوقها\b/g, 'تفوقه'],
+      [/\bيزيدها\b/g, 'يزيده'],
       [/\bالتي تجسد\b/g, 'الذي يجسد'],
       [/\bالتي أبهرت\b/g, 'الذي أبهر'],
       [/\bقد استوفت\b/g, 'قد استوفى'],
@@ -216,6 +235,10 @@ export function convertArabicTextGender(text: string, targetGender: RecipientGen
       [/\bمنحها\b/g, 'منحه'],
       [/\bللطالبة\b/g, 'للطالب'],
       [/\bالطالبة\b/g, 'الطالب'],
+      [/\bطالبة\b/g, 'طالب'],
+      [/\bالمتميزة\b/g, 'المتميز'],
+      [/\bالمتفوقة\b/g, 'المتفوق'],
+      [/\bالنجيبة\b/g, 'النجيب'],
     ];
 
     for (const [regex, replacement] of phraseMapMale) {
@@ -234,17 +257,24 @@ export function adaptCertificateGender(
   newGender: RecipientGender,
   options?: { preserveCustomStudentName?: boolean }
 ): CertificateData {
-  // Sample student names used in templates
-  const maleSampleNames = ['محمد بن عبد الله آل سعود', 'عبد الله بن خالد الشهري', 'أحمد بن محمد العتيبي'];
-  const femaleSampleNames = ['سارة بنت أحمد الغامدي', 'منى بنت يوسف الغامدي', 'نورة بنت خالد الدوسري'];
+  const maleSampleNames = ['عبد الله بن محمد العتيبي', 'محمد بن عبد الله آل سعود', 'عبد الله بن خالد الشهري', 'أحمد بن محمد العتيبي'];
+  const femaleSampleNames = ['سارة بنت أحمد الغامدي', 'منى بنت يوسف الغامدي', 'نورة بنت خالد الدوسري', 'فاطمة بنت محمد العتيبي'];
 
   let newStudentName = data.studentName;
   if (!options?.preserveCustomStudentName || !data.studentName) {
     if (newGender === 'female' && (maleSampleNames.includes(data.studentName) || detectGenderFromName(data.studentName) === 'male')) {
-      newStudentName = 'سارة بنت أحمد الغامدي';
+      newStudentName = convertArabicTextGender(data.studentName, 'female');
+      if (newStudentName === data.studentName) {
+        newStudentName = 'سارة بنت أحمد الغامدي';
+      }
     } else if (newGender === 'male' && (femaleSampleNames.includes(data.studentName) || detectGenderFromName(data.studentName) === 'female')) {
-      newStudentName = 'محمد بن عبد الله آل سعود';
+      newStudentName = convertArabicTextGender(data.studentName, 'male');
+      if (newStudentName === data.studentName) {
+        newStudentName = 'عبد الله بن محمد العتيبي';
+      }
     }
+  } else {
+    newStudentName = convertArabicTextGender(data.studentName, newGender);
   }
 
   return {
@@ -305,4 +335,3 @@ export function generateLocalCertificateFallback(params: {
     secondaryColorHex: '#d97706',
   };
 }
-
