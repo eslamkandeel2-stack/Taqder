@@ -24,6 +24,7 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { CertificateData } from '../types';
+import { getCertificateDimensions } from '../utils/exportUtils';
 
 interface PrintPreviewModalProps {
   isOpen: boolean;
@@ -136,19 +137,19 @@ export const PrintPreviewModal: React.FC<PrintPreviewModalProps> = ({
   // Capture live certificate node on modal open or certificate data update
   useEffect(() => {
     if (isOpen) {
+      const dims = getCertificateDimensions(certificateData.aspectRatio);
+      setCertDimensions({ width: dims.baseWidth, height: dims.baseHeight });
+
       const origCert = document.getElementById('certificate-print-area');
       if (origCert) {
-        // Natural unscaled dimensions
-        const styleWidth = parseInt(origCert.style.width, 10) || origCert.offsetWidth || 1050;
-        const styleHeight = parseInt(origCert.style.height, 10) || origCert.offsetHeight || 742;
-        setCertDimensions({ width: styleWidth, height: styleHeight });
-
         // Clone element cleanly keeping id="certificate-print-area" so all CSS rules apply
         const clone = origCert.cloneNode(true) as HTMLElement;
         clone.style.transform = 'none';
         clone.style.margin = '0';
         clone.style.position = 'relative';
         clone.style.boxShadow = 'none';
+        clone.style.width = `${dims.baseWidth}px`;
+        clone.style.height = `${dims.baseHeight}px`;
         setCertHtml(clone.outerHTML);
       }
     }

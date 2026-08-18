@@ -96,7 +96,7 @@ import {
 interface Props {
   certificateData: CertificateData;
   onChange: (newData: CertificateData) => void;
-  onOpenAiModal: () => void;
+  onOpenAiModal: (tab?: 'improve' | 'full' | 'settings', field?: 'appreciation' | 'title' | 'intro' | 'poem') => void;
   onExportPDF: () => void;
   onExportImage: () => void;
   onShareEmail: () => void;
@@ -1899,7 +1899,18 @@ export const EditorToolbar: React.FC<Props> = ({
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">عنوان الشهادة الرئيسي</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-bold text-slate-700">عنوان الشهادة الرئيسي</label>
+                <button
+                  type="button"
+                  onClick={() => onOpenAiModal?.('improve', 'title')}
+                  className="text-[10px] font-bold text-amber-900 bg-amber-100 hover:bg-amber-200 px-2 py-0.5 rounded-md border border-amber-300 flex items-center gap-1 transition cursor-pointer"
+                  title="اقتراح وتحسين عناوين الشهادة بالذكاء الاصطناعي"
+                >
+                  <Sparkles className="w-3 h-3 text-amber-600" />
+                  <span>صياغة ذكية بالـ AI</span>
+                </button>
+              </div>
               <input
                 type="text"
                 value={certificateData.title}
@@ -1940,9 +1951,20 @@ export const EditorToolbar: React.FC<Props> = ({
 
             {/* Recipient Intro (عبارة مقدمة التكريم) Directly Above Appreciation Text */}
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1.5">
-                <span>🎗️ عبارة مقدمة التكريم (التمهيدية)</span>
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                  <span>🎗️ عبارة مقدمة التكريم (التمهيدية)</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => onOpenAiModal?.('improve', 'intro')}
+                  className="text-[10px] font-bold text-amber-900 bg-amber-100 hover:bg-amber-200 px-2 py-0.5 rounded-md border border-amber-300 flex items-center gap-1 transition cursor-pointer"
+                  title="تحسين مقدمة التكريم بالذكاء الاصطناعي"
+                >
+                  <Sparkles className="w-3 h-3 text-amber-600" />
+                  <span>صياغة ذكية بالـ AI</span>
+                </button>
+              </div>
               <input
                 type="text"
                 value={certificateData.recipientIntro || ''}
@@ -1962,7 +1984,18 @@ export const EditorToolbar: React.FC<Props> = ({
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">عبارة التقدير والشكر التفصيلية</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-bold text-slate-700">عبارة التقدير والشكر التفصيلية</label>
+                <button
+                  type="button"
+                  onClick={() => onOpenAiModal?.('improve', 'appreciation')}
+                  className="text-[11px] font-black text-amber-950 bg-gradient-to-r from-amber-200 to-amber-300 hover:from-amber-300 hover:to-amber-400 px-2.5 py-1 rounded-lg border border-amber-400 shadow-2xs flex items-center gap-1.5 transition cursor-pointer"
+                  title="تحسين وبلاغة عبارة التقدير والشكر بالذكاء الاصطناعي"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-700 animate-pulse" />
+                  <span>تحسين الصياغة بالذكاء الاصطناعي ✨</span>
+                </button>
+              </div>
               <textarea
                 rows={3}
                 value={certificateData.appreciationText}
@@ -1986,15 +2019,26 @@ export const EditorToolbar: React.FC<Props> = ({
                 <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                   ✨ بيت شعر أو مقولة ملهمة
                 </label>
-                <label className="flex items-center gap-1.5 cursor-pointer text-xs font-bold text-slate-700 bg-white hover:bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200 shadow-2xs transition-colors">
-                  <input
-                    type="checkbox"
-                    checked={certificateData.showPoemOrQuote ?? true}
-                    onChange={(e) => updateField('showPoemOrQuote', e.target.checked)}
-                    className="accent-amber-600 rounded cursor-pointer w-3.5 h-3.5"
-                  />
-                  <span>إظهار في الشهادة</span>
-                </label>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onOpenAiModal?.('improve', 'poem')}
+                    className="text-[10px] font-bold text-amber-900 bg-amber-100 hover:bg-amber-200 px-2 py-0.5 rounded-md border border-amber-300 flex items-center gap-1 transition cursor-pointer"
+                    title="اقتراح وتوليد أبيات شعرية راقية وحكم بالذكاء الاصطناعي"
+                  >
+                    <Sparkles className="w-3 h-3 text-amber-600" />
+                    <span>اقتراح أبيات بالـ AI</span>
+                  </button>
+                  <label className="flex items-center gap-1.5 cursor-pointer text-xs font-bold text-slate-700 bg-white hover:bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200 shadow-2xs transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={certificateData.showPoemOrQuote ?? true}
+                      onChange={(e) => updateField('showPoemOrQuote', e.target.checked)}
+                      className="accent-amber-600 rounded cursor-pointer w-3.5 h-3.5"
+                    />
+                    <span>إظهار في الشهادة</span>
+                  </label>
+                </div>
               </div>
               {(certificateData.showPoemOrQuote ?? true) && (
                 <>

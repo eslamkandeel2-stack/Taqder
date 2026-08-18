@@ -5,6 +5,7 @@ import { generateCode39Bars } from '../utils/barcodeUtils';
 import { getGradientCss } from '../utils/gradientUtils';
 import { getTodayHijriDate, getTodayGregorianDate } from '../utils/defaultSettings';
 import { validateGridTemplateAreas } from '../utils/gridValidator';
+import { getCertificateDimensions } from '../utils/exportUtils';
 import {
   Award,
   Star,
@@ -1286,7 +1287,7 @@ export const CertificateCanvas: React.FC<Props> = ({
     style?: React.CSSProperties;
     multiline?: boolean;
     rows?: number;
-  }> = ({ value, onChange, placeholder, className = '', style = {}, multiline = false, rows = 2 }) => {
+  }> = ({ value, onChange, placeholder = '', className = '', style = {}, multiline = false }) => {
     // Helper to strip classes that cause text clipping or truncation
     const sanitizeCls = (cls: string) => {
       return cls
@@ -1297,95 +1298,54 @@ export const CertificateCanvas: React.FC<Props> = ({
         .trim();
     };
 
-    const styleTextAlign = (style as Record<string, unknown>)?.textAlign as string | undefined;
+    const cleanClassName = sanitizeCls(className);
+    const customLineHeight = (style as Record<string, unknown>)?.lineHeight as string | undefined;
+    const customLetterSpacing = (style as Record<string, unknown>)?.letterSpacing as string | undefined;
+    const styleTextAlign = ((style as Record<string, unknown>)?.textAlign as string | undefined) ||
+      (cleanClassName.includes('text-right') ? 'right' : cleanClassName.includes('text-left') ? 'left' : 'center');
 
-    if (isExporting || !onUpdateData) {
-      const cleanClassName = sanitizeCls(className);
-      const customLineHeight = (style as Record<string, unknown>)?.lineHeight as string | undefined;
-      const customLetterSpacing = (style as Record<string, unknown>)?.letterSpacing as string | undefined;
-      const styleTextAlign = ((style as Record<string, unknown>)?.textAlign as string | undefined) ||
-        (cleanClassName.includes('text-right') ? 'right' : cleanClassName.includes('text-left') ? 'left' : 'center');
+    const isEditable = !isExporting && !!onUpdateData;
+    const displayValue = value || (isExporting ? placeholder : '');
 
-      return (
-        <span
-          className={`inline-block whitespace-pre-wrap break-words max-w-full ${cleanClassName}`}
+    return (
+      <div className="relative group/inline w-full max-w-full">
+        <div
+          contentEditable={isEditable}
+          suppressContentEditableWarning
+          onBlur={(e) => {
+            const text = e.currentTarget.innerText.trim();
+            onChange(text);
+          }}
+          onKeyDown={(e) => {
+            if (!multiline && e.key === 'Enter') {
+              e.preventDefault();
+              e.currentTarget.blur();
+            }
+          }}
+          data-placeholder={placeholder}
+          className={`${cleanClassName} ${
+            isEditable ? 'outline-none hover:ring-1 hover:ring-amber-400/60 focus:ring-2 focus:ring-amber-400/80 rounded transition-all cursor-text' : ''
+          } whitespace-pre-wrap break-words max-w-full`}
           style={{
             ...style,
             textAlign: styleTextAlign,
-            lineHeight: customLineHeight || '1.4',
+            lineHeight: customLineHeight || (multiline ? '1.5' : '1.4'),
             letterSpacing: customLetterSpacing || 'normal',
             overflow: 'visible',
             textOverflow: 'clip',
             wordBreak: 'break-word',
             overflowWrap: 'break-word',
-          }}
-        >
-          {value || placeholder}
-        </span>
-      );
-    }
-
-    if (multiline) {
-      const lineCount = (value || placeholder || '').split('\n').length;
-      const estimatedByLength = Math.ceil(((value || placeholder || '').length) / 72);
-      const computedRows = Math.max(lineCount, estimatedByLength, 1);
-      const customLineHeight = (style as Record<string, unknown>)?.lineHeight as string | undefined;
-      const customLetterSpacing = (style as Record<string, unknown>)?.letterSpacing as string | undefined;
-      const isRightAligned = className.includes('text-right') || styleTextAlign === 'right';
-      const isLeftAligned = className.includes('text-left') || styleTextAlign === 'left';
-      const alignClass = isRightAligned ? 'text-right' : isLeftAligned ? 'text-left' : 'text-center';
-      const itemsClass = isRightAligned ? 'items-end' : isLeftAligned ? 'items-start' : 'items-center';
-
-      return (
-        <div className={`relative group/inline w-full flex flex-col justify-center ${itemsClass}`}>
-          <textarea
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder={placeholder}
-            rows={computedRows}
-            className={`${sanitizeCls(className)} bg-transparent border-0 p-0 m-0 hover:border-amber-400/80 focus:border-amber-500 focus:bg-white/95 focus:ring-2 focus:ring-amber-400/50 rounded-lg transition-all outline-none resize-none ${alignClass} w-full`}
-            style={{
-              ...style,
-              lineHeight: customLineHeight || '1.6',
-              letterSpacing: customLetterSpacing || 'normal',
-              overflow: 'visible',
-            }}
-            dir="auto"
-          />
-          <span className="opacity-0 group-hover/inline:opacity-100 transition-opacity absolute -top-3 left-1/2 -translate-x-1/2 bg-amber-700 text-white text-[10px] px-1.5 py-0.5 rounded shadow pointer-events-none z-30 font-sans font-bold flex items-center gap-1 whitespace-nowrap">
-            <Edit3 className="w-2.5 h-2.5" /> تحرير
-          </span>
-        </div>
-      );
-    }
-
-    const customLineHeight = (style as Record<string, unknown>)?.lineHeight as string | undefined;
-    const customLetterSpacing = (style as Record<string, unknown>)?.letterSpacing as string | undefined;
-    const isRightAligned = className.includes('text-right') || styleTextAlign === 'right';
-    const isLeftAligned = className.includes('text-left') || styleTextAlign === 'left';
-    const alignClass = isRightAligned ? 'text-right' : isLeftAligned ? 'text-left' : 'text-center';
-    const itemsClass = isRightAligned ? 'items-end' : isLeftAligned ? 'items-start' : 'items-center';
-
-    return (
-      <div className={`relative group/inline flex-1 min-w-0 max-w-full inline-flex flex-col justify-center ${itemsClass}`}>
-        <input
-          type="text"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={placeholder}
-          size={Math.max((value || placeholder || '').length + 1, 4)}
-          className={`${sanitizeCls(className)} bg-transparent border-0 p-0 m-0 hover:border-amber-400/80 focus:border-amber-500 focus:bg-white/95 focus:ring-2 focus:ring-amber-400/50 rounded-lg transition-all outline-none ${alignClass} max-w-full min-w-[60px]`}
-          style={{
-            ...style,
-            lineHeight: customLineHeight || 'inherit',
-            letterSpacing: customLetterSpacing || 'normal',
-            overflow: 'visible',
+            minHeight: '1em',
           }}
           dir="auto"
-        />
-        <span className="opacity-0 group-hover/inline:opacity-100 transition-opacity absolute -top-3 left-1/2 -translate-x-1/2 bg-amber-700 text-white text-[10px] px-1.5 py-0.5 rounded shadow pointer-events-none z-30 font-sans font-bold flex items-center gap-1 whitespace-nowrap">
-          <Edit3 className="w-2.5 h-2.5" /> تحرير
-        </span>
+        >
+          {displayValue || (!isExporting ? placeholder : '')}
+        </div>
+        {isEditable && (
+          <span className="opacity-0 group-hover/inline:opacity-100 transition-opacity absolute -top-3.5 left-1/2 -translate-x-1/2 bg-amber-700 text-white text-[10px] px-1.5 py-0.5 rounded shadow pointer-events-none z-30 font-sans font-bold flex items-center gap-1 whitespace-nowrap">
+            <Edit3 className="w-2.5 h-2.5" /> تحرير
+          </span>
+        )}
       </div>
     );
   };
@@ -2223,34 +2183,7 @@ export const CertificateCanvas: React.FC<Props> = ({
     }
   };
 
-  const getAspectDimensions = () => {
-    switch (data.aspectRatio) {
-      case 'A4-portrait':
-        return {
-          baseWidth: 794,
-          baseHeight: 1123,
-          widthClass: 'w-[794px] h-[1123px]',
-          label: 'ورقة A4 عمودية (210 × 297 مم)'
-        };
-      case 'square':
-        return {
-          baseWidth: 800,
-          baseHeight: 800,
-          widthClass: 'w-[800px] h-[800px]',
-          label: 'مربع قياسي (1 : 1)'
-        };
-      case 'A4-landscape':
-      default:
-        return {
-          baseWidth: 1050,
-          baseHeight: 742,
-          widthClass: 'w-[1050px] h-[742px]',
-          label: 'ورقة A4 أفقية (297 × 210 مم)'
-        };
-    }
-  };
-
-  const aspectInfo = getAspectDimensions();
+  const aspectInfo = getCertificateDimensions(data.aspectRatio);
 
   let scale = 1.0;
   if (!isExporting) {
@@ -2665,6 +2598,7 @@ export const CertificateCanvas: React.FC<Props> = ({
               ref={actualCanvasRef}
               id="certificate-print-area"
               data-certificate-canvas="true"
+              data-aspect={data.aspectRatio || 'A4-landscape'}
               dir="rtl"
               className={`relative overflow-hidden bg-white shadow-2xl rounded-lg ${aspectInfo.widthClass} ${fontClass}`}
               style={{
@@ -3498,11 +3432,10 @@ export const CertificateCanvas: React.FC<Props> = ({
 
                 {/* Poetic Verse / Quote */}
                 {(data.showPoemOrQuote ?? true) && data.poemOrQuote && (
-                  <DraggableItem elementKey="poemBlock" className="mt-0.5 mb-0 max-w-3xl w-full mx-auto transition-all duration-300">
+                  <DraggableItem elementKey="poemBlock" className="mt-0.5 mb-0 max-w-3xl w-full mx-auto transition-all duration-300 overflow-visible">
                     <div
-                      className={`italic text-xs sm:text-sm opacity-90 leading-tight w-full break-words whitespace-pre-wrap transition-transform ${getElementFontClass('poemOrQuote')}`}
+                      className="w-full transition-transform"
                       style={{
-                        ...getElementCssStyle('poemOrQuote', data.primaryColor),
                         transform: `translate(${data.poemOrQuoteOffsetX || 0}px, ${data.poemOrQuoteOffsetY || 0}px)`
                       }}
                     >
@@ -3512,7 +3445,7 @@ export const CertificateCanvas: React.FC<Props> = ({
                         placeholder="بيت شعر أو المقولة..."
                         multiline
                         rows={1}
-                        className={`italic w-full text-center break-words whitespace-pre-wrap ${getElementFontClass('poemOrQuote')}`}
+                        className={`italic text-xs sm:text-sm opacity-90 leading-tight w-full text-center break-words whitespace-pre-wrap ${getElementFontClass('poemOrQuote')}`}
                         style={getElementCssStyle('poemOrQuote', data.primaryColor)}
                       />
                     </div>

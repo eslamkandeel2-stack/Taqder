@@ -25,8 +25,7 @@ import {
   ShieldCheck,
   Sparkles
 } from 'lucide-react';
-import html2canvas from 'html2canvas';
-import { sanitizeOklchInDoc, waitForImagesToLoad, findCertificateCanvasElement } from '../utils/exportUtils';
+import { captureCertificateCanvas, findCertificateCanvasElement } from '../utils/exportUtils';
 
 interface Props {
   isOpen: boolean;
@@ -217,34 +216,18 @@ export const GoogleDriveSaveModal: React.FC<Props> = ({
       // Get canvas element with robust fallback search
       const elementToCapture = await findCertificateCanvasElement(canvasRef, 15, 100);
 
-      await waitForImagesToLoad(elementToCapture as HTMLElement);
-
-      // Render canvas to PNG Blob
-      const canvas = await html2canvas(elementToCapture as HTMLElement, {
-        scale: 2.5,
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: certificateData.backgroundColor || '#ffffff',
-        logging: false,
-        onclone: (clonedDoc) => {
-          sanitizeOklchInDoc(clonedDoc);
-          const clonedCert = clonedDoc.getElementById('certificate-print-area') || 
-            clonedDoc.querySelector('[data-certificate-canvas="true"]') ||
-            clonedDoc.querySelector('#certificate-print-area');
-          if (clonedCert && clonedCert instanceof HTMLElement) {
-            clonedCert.style.transform = 'none';
-            clonedCert.style.margin = '0';
-            clonedCert.style.position = 'relative';
-            clonedCert.style.boxShadow = 'none';
-          }
-        },
-      });
+      // Render canvas with exact mathematical proportions
+      const canvas = await captureCertificateCanvas(
+        elementToCapture as HTMLElement,
+        certificateData,
+        { scale: 2.8 }
+      );
 
       const blob: Blob = await new Promise((resolve, reject) => {
         canvas.toBlob((b) => {
           if (b) resolve(b);
           else reject(new Error('فشل إنشاء صورة الشهادة'));
-        }, 'image/png', 0.95);
+        }, 'image/png', 0.98);
       });
 
       const cleanStudentName = certificateData.studentName.replace(/[^\w\s\u0600-\u06FF-]/gi, '').trim();

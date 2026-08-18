@@ -17,7 +17,13 @@ import { GoogleDriveSaveModal } from './components/GoogleDriveSaveModal';
 import { PrintPreviewModal } from './components/PrintPreviewModal';
 import { DirectShareModal } from './components/DirectShareModal';
 import { DraftsManagerModal } from './components/DraftsManagerModal';
-import { sanitizeOklchInDoc, waitForImagesToLoad, findCertificateCanvasElement } from './utils/exportUtils';
+import {
+  sanitizeOklchInDoc,
+  waitForImagesToLoad,
+  findCertificateCanvasElement,
+  exportCertificateAsPdf,
+  exportCertificateAsPng
+} from './utils/exportUtils';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import {
@@ -229,7 +235,27 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [historyIndex, history.length]);
 
-  const [isAiModalOpen, setIsAiModalOpen] = useState(false);
+  const [aiModalConfig, setAiModalConfig] = useState<{
+    isOpen: boolean;
+    tab?: 'improve' | 'full' | 'settings';
+    targetField?: 'appreciation' | 'title' | 'intro' | 'poem';
+  }>({
+    isOpen: false,
+    tab: 'improve',
+    targetField: 'appreciation',
+  });
+
+  const handleOpenAiModal = (
+    tab: 'improve' | 'full' | 'settings' = 'improve',
+    field: 'appreciation' | 'title' | 'intro' | 'poem' = 'appreciation'
+  ) => {
+    setAiModalConfig({
+      isOpen: true,
+      tab,
+      targetField: field,
+    });
+  };
+
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [shareInitialMode, setShareInitialMode] = useState<'whatsapp' | 'email'>('whatsapp');
   const [isVerificationModalOpen, setIsVerificationModalOpen] = useState(false);
@@ -258,67 +284,16 @@ export default function App() {
   // Export Certificate to PDF
   const handleExportPDF = async () => {
     setIsExporting(true);
-    showToast('جاري تحضير ملف PDF عالي الدقة للطباعة...');
+    showToast('جاري تحضير ملف PDF عالي الدقة بحسابات النسبة المتطابقة...');
 
     try {
-      if (document.fonts) {
-        await document.fonts.ready;
-      }
-
       // Wait for React re-render so scale transform & UI controls are removed
       await new Promise((resolve) => setTimeout(resolve, 250));
 
-      const element = await findCertificateCanvasElement(canvasRef, 12, 100);
+      const element = await findCertificateCanvasElement(canvasRef, 15, 100);
+      await exportCertificateAsPdf(element, certificateData);
 
-      await waitForImagesToLoad(element as HTMLElement);
-
-      const canvas = await html2canvas(element, {
-        scale: 2.5, // High DPI (300 DPI equivalent)
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: certificateData.backgroundColor || '#ffffff',
-        logging: false,
-        windowWidth: 1200,
-        windowHeight: 900,
-        onclone: (clonedDoc) => {
-          sanitizeOklchInDoc(clonedDoc);
-          const clonedCert = clonedDoc.getElementById('certificate-print-area');
-          if (clonedCert) {
-            clonedCert.style.transform = 'none';
-            clonedCert.style.margin = '0';
-            clonedCert.style.position = 'relative';
-            clonedCert.style.boxShadow = 'none';
-          }
-        }
-      });
-
-      const imgData = canvas.toDataURL('image/png', 1.0);
-      const isLandscape = certificateData.aspectRatio === 'A4-landscape';
-      const isSquare = certificateData.aspectRatio === 'square';
-      
-      let pdf: jsPDF;
-      if (isSquare) {
-        pdf = new jsPDF({
-          orientation: 'portrait',
-          unit: 'mm',
-          format: [210, 210]
-        });
-      } else {
-        pdf = new jsPDF({
-          orientation: isLandscape ? 'landscape' : 'portrait',
-          unit: 'mm',
-          format: 'a4',
-        });
-      }
-
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = pdf.internal.pageSize.getHeight();
-
-      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-      const cleanName = (certificateData.studentName || 'طالب').replace(/[^\w\s\u0600-\u06FF-]/gi, '').trim();
-      pdf.save(`شهادة_تقدير_${cleanName || 'طالب'}.pdf`);
-
-      showToast('تم تحميل شهادة PDF بنجاح! ✨');
+      showToast('تم تحميل شهادة PDF بنجاح مع تطابق كامل للأبعاد! ✨');
     } catch (err) {
       console.error('PDF Export Error:', err);
       showToast('تعذر إنشاء ملف PDF تلقائياً، جاري فتح الطباعة المباشرة...');
@@ -331,45 +306,16 @@ export default function App() {
   // Export Certificate to PNG Image
   const handleExportImage = async () => {
     setIsExporting(true);
-    showToast('جاري توليد صورة PNG فائقة الجودة...');
+    showToast('جاري توليد صورة PNG فائقة الجودة بتطابق تام...');
 
     try {
-      if (document.fonts) {
-        await document.fonts.ready;
-      }
-
       // Wait for React re-render so scale transform & UI controls are removed
       await new Promise((resolve) => setTimeout(resolve, 250));
 
-      const element = await findCertificateCanvasElement(canvasRef, 12, 100);
+      const element = await findCertificateCanvasElement(canvasRef, 15, 100);
+      await exportCertificateAsPng(element, certificateData);
 
-      await waitForImagesToLoad(element as HTMLElement);
-
-      const canvas = await html2canvas(element, {
-        scale: 3, // Ultra-HD 3x Resolution
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: certificateData.backgroundColor || '#ffffff',
-        logging: false,
-        onclone: (clonedDoc) => {
-          sanitizeOklchInDoc(clonedDoc);
-          const clonedCert = clonedDoc.getElementById('certificate-print-area');
-          if (clonedCert) {
-            clonedCert.style.transform = 'none';
-            clonedCert.style.margin = '0';
-            clonedCert.style.position = 'relative';
-            clonedCert.style.boxShadow = 'none';
-          }
-        }
-      });
-
-      const cleanName = (certificateData.studentName || 'طالب').replace(/[^\w\s\u0600-\u06FF-]/gi, '').trim();
-      const link = document.createElement('a');
-      link.download = `شهادة_${cleanName || 'طالب'}.png`;
-      link.href = canvas.toDataURL('image/png', 1.0);
-      link.click();
-
-      showToast('تمت حفظ صورة الشهادة بنجاح! 🖼️');
+      showToast('تمت حفظ صورة الشهادة بنجاح بدقة متطابقة! 🖼️');
     } catch (err) {
       console.error('Image Export Error:', err);
       showToast('حدث خطأ أثناء حفظ صورة الشهادة');
@@ -487,7 +433,7 @@ export default function App() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         onExportPDF={handleExportPDF}
-        onQuickGenerateAI={() => setIsAiModalOpen(true)}
+        onQuickGenerateAI={() => handleOpenAiModal('improve', 'appreciation')}
         onPrint={handlePrint}
         onOpenVerificationModal={() => setIsVerificationModalOpen(true)}
         onOpenGoogleDriveModal={() => setIsDriveModalOpen(true)}
@@ -549,7 +495,7 @@ export default function App() {
 
               <div className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto shrink-0 py-0.5">
                 <button
-                  onClick={() => setIsAiModalOpen(true)}
+                  onClick={() => handleOpenAiModal('improve', 'appreciation')}
                   className="px-2.5 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 font-extrabold text-xs rounded-xl shadow-2xs hover:brightness-105 transition flex items-center justify-center gap-1 text-center truncate cursor-pointer"
                   title="صياغة العبارات بالذكاء الاصطناعي"
                 >
@@ -647,7 +593,7 @@ export default function App() {
                 <EditorToolbar
                   certificateData={certificateData}
                   onChange={updateCertificateData}
-                  onOpenAiModal={() => setIsAiModalOpen(true)}
+                  onOpenAiModal={handleOpenAiModal}
                   onExportPDF={handleExportPDF}
                   onExportImage={handleExportImage}
                   onShareEmail={handleOpenEmailShare}
@@ -720,12 +666,14 @@ export default function App() {
 
       </main>
 
-      {/* AI Generator Modal */}
+      {/* AI Generator & Text Improvement Modal */}
       <AIGeneratorModal
-        isOpen={isAiModalOpen}
-        onClose={() => setIsAiModalOpen(false)}
+        isOpen={aiModalConfig.isOpen}
+        onClose={() => setAiModalConfig(prev => ({ ...prev, isOpen: false }))}
         onApplyGeneratedContent={handleApplyAiContent}
         currentData={certificateData}
+        initialTab={aiModalConfig.tab}
+        initialTargetField={aiModalConfig.targetField}
       />
 
       {/* Verification Platform Modal */}

@@ -1,4 +1,65 @@
 import React from 'react';
+import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
+import { CertificateData } from '../types';
+
+export interface CertificateDimensionConfig {
+  baseWidth: number;
+  baseHeight: number;
+  widthMm: number;
+  heightMm: number;
+  aspectRatioValue: number; // width / height
+  widthClass: string;
+  label: string;
+  orientation: 'landscape' | 'portrait';
+  pdfFormat: string | [number, number];
+}
+
+/**
+ * Mathematical Proportion Engine: Single source of truth for certificate dimensions,
+ * aspect ratios, pixel bases, and print millimetre equations.
+ */
+export function getCertificateDimensions(aspectRatio?: string): CertificateDimensionConfig {
+  switch (aspectRatio) {
+    case 'A4-portrait':
+      return {
+        baseWidth: 794,
+        baseHeight: 1123,
+        widthMm: 210,
+        heightMm: 297,
+        aspectRatioValue: 794 / 1123, // ~0.707034 (ISO A4 Portrait)
+        widthClass: 'w-[794px] h-[1123px]',
+        label: 'ورقة A4 عمودية (210 × 297 مم)',
+        orientation: 'portrait',
+        pdfFormat: 'a4',
+      };
+    case 'square':
+      return {
+        baseWidth: 800,
+        baseHeight: 800,
+        widthMm: 210,
+        heightMm: 210,
+        aspectRatioValue: 1.0, // 1:1 Square
+        widthClass: 'w-[800px] h-[800px]',
+        label: 'مربع قياسي (1 : 1 - 210 × 210 مم)',
+        orientation: 'portrait',
+        pdfFormat: [210, 210],
+      };
+    case 'A4-landscape':
+    default:
+      return {
+        baseWidth: 1050,
+        baseHeight: 742,
+        widthMm: 297,
+        heightMm: 210,
+        aspectRatioValue: 1050 / 742, // ~1.415094 (ISO A4 Landscape)
+        widthClass: 'w-[1050px] h-[742px]',
+        label: 'ورقة A4 أفقية (297 × 210 مم)',
+        orientation: 'landscape',
+        pdfFormat: 'a4',
+      };
+  }
+}
 
 export async function waitForImagesToLoad(container: HTMLElement): Promise<void> {
   const images = Array.from(container.querySelectorAll('img'));
@@ -258,7 +319,7 @@ export function replaceAllColorFunctions(input: string): string {
   return text;
 }
 
-export function sanitizeOklchInDoc(clonedDoc: Document) {
+export function sanitizeOklchInDoc(clonedDoc: Document, certData?: CertificateData) {
   // 1. Preserve external font links (e.g. Google Fonts) and inline converted styles
   const links = clonedDoc.querySelectorAll('link[rel="stylesheet"]');
   links.forEach((link) => {
@@ -386,11 +447,15 @@ export function sanitizeOklchInDoc(clonedDoc: Document) {
     clonedContainer.style.position = 'relative';
     clonedContainer.style.boxShadow = 'none';
 
-    // Determine target unscaled base dimensions
-    const isPortrait = clonedContainer.classList.contains('aspect-portrait') || clonedContainer.getAttribute('data-aspect') === 'A4-portrait';
-    const isSquare = clonedContainer.classList.contains('aspect-square') || clonedContainer.getAttribute('data-aspect') === 'square';
-    const baseW = isSquare ? 800 : (isPortrait ? 794 : 1123);
-    const baseH = isSquare ? 800 : (isPortrait ? 1123 : 794);
+    // Determine target unscaled base dimensions using mathematical proportion engine
+    const explicitAspect = certData?.aspectRatio ||
+      clonedContainer.getAttribute('data-aspect') ||
+      (clonedContainer.classList.contains('aspect-portrait') ? 'A4-portrait' : undefined) ||
+      (clonedContainer.classList.contains('aspect-square') ? 'square' : 'A4-landscape');
+
+    const dims = getCertificateDimensions(explicitAspect);
+    const baseW = dims.baseWidth;
+    const baseH = dims.baseHeight;
 
     clonedContainer.style.width = `${baseW}px`;
     clonedContainer.style.height = `${baseH}px`;
@@ -645,4 +710,147 @@ export async function findCertificateCanvasElement(
   }
   throw new Error('لم نتمكن من تحديد لوحة الشهادة لالتقاط الصورة. يرجى التأكد من أنك في واجهة التصميم ثم المحاولة مجدداً.');
 }
+
+export interface CaptureCanvasOptions {
+  scale?: number;
+  backgroundColor?: string;
+  customWidth?: number;
+  customHeight?: number;
+}
+
+/**
+ * Captures certificate DOM element with exact mathematical aspect ratio equations,
+ * zero coordinate drift, full font ligature rendering, and high-DPI rasterization.
+ */
+export async function captureCertificateCanvas(
+  element: HTMLElement,
+  certificateData: CertificateData,
+  options: CaptureCanvasOptions = {}
+): Promise<HTMLCanvasElement> {
+  if (typeof document !== 'undefined' && document.fonts) {
+    await document.fonts.ready;
+  }
+  await waitForImagesToLoad(element);
+
+  const dims = getCertificateDimensions(certificateData.aspectRatio);
+  const targetWidth = options.customWidth || dims.baseWidth;
+  const targetHeight = options.customHeight || dims.baseHeight;
+  const scale = options.scale ?? 3.0;
+
+  const canvas = await html2canvas(element, {
+    scale,
+    useCORS: true,
+    allowTaint: true,
+    backgroundColor: options.backgroundColor || certificateData.backgroundColor || '#ffffff',
+    logging: false,
+    width: targetWidth,
+    height: targetHeight,
+    windowWidth: Math.max(1280, targetWidth + 100),
+    windowHeight: Math.max(960, targetHeight + 100),
+    scrollX: 0,
+    scrollY: 0,
+    x: 0,
+    y: 0,
+    onclone: (clonedDoc) => {
+      sanitizeOklchInDoc(clonedDoc, certificateData);
+      const clonedCert = clonedDoc.getElementById('certificate-print-area');
+      if (clonedCert) {
+        clonedCert.style.transform = 'none';
+        clonedCert.style.margin = '0';
+        clonedCert.style.position = 'relative';
+        clonedCert.style.boxShadow = 'none';
+      }
+    }
+  });
+
+  return canvas;
+}
+
+/**
+ * Creates a proportional, distortion-free PDF matching the exact aspect ratio equations
+ * of the preview canvas and target paper standards.
+ */
+export function createProportionalPdf(
+  canvas: HTMLCanvasElement,
+  certificateData: CertificateData
+): jsPDF {
+  const dims = getCertificateDimensions(certificateData.aspectRatio);
+  const isSquare = certificateData.aspectRatio === 'square';
+  const isLandscape = dims.orientation === 'landscape';
+
+  let pdf: jsPDF;
+  if (isSquare) {
+    pdf = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: [dims.widthMm, dims.heightMm],
+      compress: true
+    });
+  } else {
+    pdf = new jsPDF({
+      orientation: isLandscape ? 'landscape' : 'portrait',
+      unit: 'mm',
+      format: 'a4',
+      compress: true
+    });
+  }
+
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
+
+  // Mathematical Aspect Ratio Calculations:
+  // Calculate exact scale fit to guarantee 100% fidelity without distortion or clipping
+  const canvasAspect = canvas.width / canvas.height;
+  const pageAspect = pageWidth / pageHeight;
+
+  let drawWidth = pageWidth;
+  let drawHeight = pageHeight;
+  let posX = 0;
+  let posY = 0;
+
+  // If there is any microscopic delta in aspect ratio, fit and center with mathematical precision
+  if (Math.abs(canvasAspect - pageAspect) > 0.002) {
+    if (canvasAspect > pageAspect) {
+      drawWidth = pageWidth;
+      drawHeight = pageWidth / canvasAspect;
+      posY = (pageHeight - drawHeight) / 2;
+    } else {
+      drawHeight = pageHeight;
+      drawWidth = pageHeight * canvasAspect;
+      posX = (pageWidth - drawWidth) / 2;
+    }
+  }
+
+  const imgData = canvas.toDataURL('image/png', 1.0);
+  pdf.addImage(imgData, 'PNG', posX, posY, drawWidth, drawHeight, undefined, 'FAST');
+  return pdf;
+}
+
+export function getCleanStudentFileName(studentName?: string, prefix = 'شهادة_تقدير', ext = ''): string {
+  const clean = (studentName || 'طالب').replace(/[^\w\s\u0600-\u06FF-]/gi, '').trim() || 'طالب';
+  return `${prefix}_${clean}${ext ? (ext.startsWith('.') ? ext : `.${ext}`) : ''}`;
+}
+
+export async function exportCertificateAsPdf(
+  element: HTMLElement,
+  certificateData: CertificateData
+): Promise<void> {
+  const canvas = await captureCertificateCanvas(element, certificateData, { scale: 2.8 });
+  const pdf = createProportionalPdf(canvas, certificateData);
+  const fileName = getCleanStudentFileName(certificateData.studentName, 'شهادة_تقدير', 'pdf');
+  pdf.save(fileName);
+}
+
+export async function exportCertificateAsPng(
+  element: HTMLElement,
+  certificateData: CertificateData
+): Promise<void> {
+  const canvas = await captureCertificateCanvas(element, certificateData, { scale: 3.0 });
+  const fileName = getCleanStudentFileName(certificateData.studentName, 'شهادة', 'png');
+  const link = document.createElement('a');
+  link.download = fileName;
+  link.href = canvas.toDataURL('image/png', 1.0);
+  link.click();
+}
+
 
