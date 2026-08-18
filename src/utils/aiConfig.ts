@@ -18,10 +18,10 @@ export interface AIModelOption {
 
 export const SUPPORTED_AI_MODELS: AIModelOption[] = [
   {
-    id: 'gemini-2.0-flash',
-    name: 'Gemini 2.0 Flash',
+    id: 'gemini-3.6-flash',
+    name: 'Gemini 3.6 Flash',
     badge: 'الأحدث والموصى به ⚡',
-    description: 'النموذج الأحدث فائق السرعة والبلاغة العربية، مثالي لصياغة الشهادات بدقة عالية وسرعة استجابة فائقة.',
+    description: 'النموذج المعتمد والأسرع لصياغة الشهادات بدقة عالية وبلاغة استثنائية.',
     recommended: true,
   },
   {
@@ -34,7 +34,7 @@ export const SUPPORTED_AI_MODELS: AIModelOption[] = [
 
 export const DEFAULT_AI_SETTINGS: AISettings = {
   apiKey: '',
-  model: 'gemini-2.0-flash',
+  model: 'gemini-3.6-flash',
   temperature: 0.7,
   tone: 'رسمي وفخم',
   systemInstruction: '',
@@ -113,7 +113,7 @@ export async function testAIConnection(settings?: AISettings): Promise<{
       headers: getAIRequestHeaders(cfg),
       body: JSON.stringify({
         apiKey: cfg.apiKey?.trim() || undefined,
-        model: cfg.model?.trim() || 'gemini-2.0-flash',
+        model: cfg.model?.trim() || 'gemini-3.6-flash',
       }),
     });
 
@@ -291,7 +291,7 @@ export async function improveCertificateTextWithAi(params: ImproveTextParams): P
         temperature: cfg.temperature,
         systemInstruction: cfg.systemInstruction,
         apiKey: cfg.apiKey?.trim() || undefined,
-        model: cfg.model?.trim() || 'gemini-2.0-flash',
+        model: cfg.model?.trim() || 'gemini-3.6-flash',
       }),
     });
 
