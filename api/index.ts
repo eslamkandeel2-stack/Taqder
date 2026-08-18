@@ -11,7 +11,7 @@ function setCorsHeaders(res: VercelResponse) {
   );
 }
 
-// استخراج بيانات الطلب
+// استخراج بيانات الطلب والمفاتيح
 function extractAiCredentials(req: VercelRequest) {
   let bodyData = req.body;
   if (typeof req.body === 'string' && req.body.trim() !== '') {
@@ -28,15 +28,14 @@ function extractAiCredentials(req: VercelRequest) {
 
   const headerModel = req.headers['x-gemini-model'] as string | undefined;
   const bodyModel = bodyData?.model as string | undefined;
-  const model = (headerModel || bodyModel || 'gemini-2.0-flash').trim();
+  const model = (headerModel || bodyModel || 'gemini-3.6-flash').trim();
 
   return { apiKey, model, bodyData };
 }
 
 // دالة الاتصال المباشر بـ REST API بدون استخدام SDK
 async function callGeminiDirectly(apiKey: string, model: string, prompt: string, isJson: boolean = false) {
-  // يوضع المفتاح كـ Parameter في نهاية الرابط حصراً لضمان عدم إرسال Authorization: Bearer
-  const cleanModel = model.startsWith('gemini-') ? model : 'gemini-2.0-flash';
+  const cleanModel = model.startsWith('gemini-') ? model : 'gemini-3.6-flash';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${cleanModel}:generateContent?key=${apiKey}`;
 
   const payload: any = {
@@ -92,14 +91,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       return res.status(200).json({
         success: true,
-        modelUsed: model || 'gemini-2.0-flash',
+        modelUsed: model || 'gemini-3.6-flash',
         sampleResponse: resultText.trim(),
         message: `تم الاتصال بنموذج الذكاء الاصطناعي بنجاح! 🟢`,
       });
     }
 
-    // 2. توليد محتوى الشهادات
-    if (pathname === '/generate-certificate-content') {
+    // 2. تحسين وبلاغة النصوص الفردية (إرجاع البدائل عبر الذكاء الاصطناعي)
+    if (pathname === '/ai-improve-text' || pathname === '/ai-improve-text/') {
+      const { text, type, style, gender, studentName, subject } = bodyData || {};
+      const isFemale = gender === 'female';
+
+      const prompt = `أنت خبير بلاغة وسجع عربي. قم بتقديم 3 صياغات بليغة ومختلفة بناءً على النص التالي: "${text || ''}" لقسم (${type || 'فقرة تقدير'}) بأسلوب (${style || 'رسمي وفخم'}) لتكريم ${isFemale ? 'الطالبة' : 'الطالب'} (${studentName || 'المتميز/ة'}) في مادة (${subject || 'التفوق العام'}).
+المطلوب إرجاع JSON فقط يحتوي على مصفوفة باسم variations بنفس الهيكل:
+{
+  "variations": [
+    { "id": 1, "text": "الصياغة الأولى هنا...", "styleLabel": "صياغة ملكية وفخمة" },
+    { "id": 2, "text": "الصياغة الثانية هنا...", "styleLabel": "أسلوب مسجوع وبليغ" },
+    { "id": 3, "text": "الصياغة الثالثة هنا...", "styleLabel": "أسلوب حماسي ملهم" }
+  ]
+}`;
+
+      const resultText = await callGeminiDirectly(apiKey, model, prompt, true);
+      const parsed = JSON.parse(resultText || '{}');
+
+      return res.status(200).json({
+        success: true,
+        variations: parsed.variations || [],
+      });
+    }
+
+    // 3. توليد محتوى الشهادات المتكاملة
+    if (pathname === '/generate-certificate-content' || pathname === '/generate-certificate-content/') {
       const { studentName, subject, recipientGender } = bodyData || {};
       const isFemale = recipientGender === 'female';
 
