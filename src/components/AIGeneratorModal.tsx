@@ -81,7 +81,7 @@ export const AIGeneratorModal: React.FC<Props> = ({
 
   // Quick Settings State
   const [tempApiKey, setTempApiKey] = useState(aiSettings.apiKey || '');
-  const [tempModel, setTempModel] = useState(aiSettings.model || 'gemini-3.7-flash');
+  const [tempModel, setTempModel] = useState(aiSettings.model || 'gemini-2.0-flash');
   const [showKey, setShowKey] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string; latencyMs?: number } | null>(null);
@@ -92,9 +92,10 @@ export const AIGeneratorModal: React.FC<Props> = ({
     if (isOpen) {
       setModalTab(initialTab);
       setImproveFieldType(initialTargetField);
-      setAiSettings(getSavedAISettings());
-      setTempApiKey(getSavedAISettings().apiKey || '');
-      setTempModel(getSavedAISettings().model || 'gemini-3.7-flash');
+      const saved = getSavedAISettings();
+      setAiSettings(saved);
+      setTempApiKey(saved.apiKey || '');
+      setTempModel(saved.model || 'gemini-2.0-flash');
       setStudentName(currentData.studentName || '');
       const gender = currentData.recipientGender || (detectGenderFromName(currentData.studentName) === 'female' ? 'female' : 'male');
       setRecipientGender(gender);
@@ -222,7 +223,7 @@ export const AIGeneratorModal: React.FC<Props> = ({
       let resultData: any = null;
 
       try {
-        const endpoint = (aiSettings.customApiUrl?.trim() || '') + '/api/generate-certificate-content';
+        const endpoint = '/api/generate-certificate-content';
         const response = await fetch(endpoint, {
           method: 'POST',
           headers: getAIRequestHeaders(aiSettings),
@@ -236,7 +237,7 @@ export const AIGeneratorModal: React.FC<Props> = ({
             schoolName: currentData.schoolName,
             teacherName: currentData.signatures?.[0]?.name,
             apiKey: aiSettings.apiKey?.trim() || undefined,
-            model: aiSettings.model || 'gemini-3.7-flash',
+            model: aiSettings.model || 'gemini-2.0-flash',
             temperature: aiSettings.temperature,
             systemInstruction: aiSettings.systemInstruction,
           }),
@@ -812,7 +813,7 @@ export const AIGeneratorModal: React.FC<Props> = ({
                       type={showKey ? 'text' : 'password'}
                       value={tempApiKey}
                       onChange={(e) => setTempApiKey(e.target.value)}
-                      placeholder="AIzaSy... (اتركه فارغاً للاعتماد على المفتاح الافتراضي للسيرفر)"
+                      placeholder="AIzaSy... أو AQ.Ab... (اتركه فارغاً للاعتماد على مفتاح السيرفر)"
                       className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl font-mono text-left dir-ltr bg-white focus:ring-2 focus:ring-amber-500"
                     />
                   </div>
