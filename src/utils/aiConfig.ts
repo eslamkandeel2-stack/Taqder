@@ -107,8 +107,7 @@ export async function testAIConnection(settings?: AISettings): Promise<{
   const startTime = Date.now();
 
   try {
-    const baseUrl = cfg.customApiUrl?.trim() || '';
-    const endpoint = `${baseUrl}/api/test-ai-connection`;
+    const endpoint = '/api/test-ai-connection';
     
     const response = await fetch(endpoint, {
       method: 'POST',
@@ -277,8 +276,7 @@ export async function improveCertificateTextWithAi(params: ImproveTextParams): P
   const cfg = params.settings || getSavedAISettings();
 
   try {
-    const baseUrl = cfg.customApiUrl?.trim() || '';
-    const endpoint = `${baseUrl}/api/ai-improve-text`;
+    const endpoint = '/api/ai-improve-text';
     
     const response = await fetch(endpoint, {
       method: 'POST',
