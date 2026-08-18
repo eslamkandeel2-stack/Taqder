@@ -96,6 +96,7 @@ export function getAIRequestHeaders(settings?: AISettings): Record<string, strin
   return headers;
 }
 
+// دالة فحص الاتصال الموجّهة حصراً إلى خادم Vercel لمنع خطأ OAuth في المتصفح
 export async function testAIConnection(settings?: AISettings): Promise<{
   success: boolean;
   latencyMs?: number;
@@ -107,9 +108,7 @@ export async function testAIConnection(settings?: AISettings): Promise<{
   const startTime = Date.now();
 
   try {
-    const endpoint = '/api/test-ai-connection';
-    
-    const response = await fetch(endpoint, {
+    const response = await fetch('/api/test-ai-connection', {
       method: 'POST',
       headers: getAIRequestHeaders(cfg),
       body: JSON.stringify({
@@ -133,7 +132,7 @@ export async function testAIConnection(settings?: AISettings): Promise<{
         success: false,
         latencyMs: elapsed,
         modelUsed: cfg.model,
-        message: data.error || 'فشل الاتصال بالـ API. يرجى مراجعة مفتاح API والنموذج المختار.',
+        message: data.error || 'فشل الاتصال بالـ API. يرجى مراجعة المفتاح والنموذج.',
         details: data.details,
       };
     }
@@ -143,7 +142,7 @@ export async function testAIConnection(settings?: AISettings): Promise<{
       success: false,
       latencyMs: elapsed,
       modelUsed: cfg.model,
-      message: 'تعذر الوصول إلى خادم الذكاء الاصطناعي (تحقق من اتصال الإنترنت وإعدادات السيرفر)',
+      message: 'تعذر الوصول إلى الخادم (تحقق من إعدادات Vercel والشبكة)',
       details: err?.message || String(err),
     };
   }
@@ -253,7 +252,7 @@ export function generateLocalTextVariations(params: ImproveTextParams): TextVari
       },
       {
         id: 2,
-        text: `إشادةً بعلو همته وسمو أخلاقه وتميزه الباهر في ${subj}؛ حيث سطر بإخلاصه ومثابرته أروع نماذج الإبداع والنجاح. دمت كوكباً وضاءً في سماء المعرفة ومصدر فخر لوالديك ومدرستك.`,
+        text: `إشادةً بعلو همته وسمو أخلاقه وتميزه الباهر في ${subj}؛ حيث سطر بإخلاصه ومثابرتها أروع نماذج الإبداع والنجاح. دمت كوكباً وضاءً في سماء المعرفة ومصدر فخر لوالديك ومدرستك.`,
         styleLabel: 'أسلوب مسجوع وبليغ',
         toneTag: 'مسجوع وأدبي',
       },
@@ -276,9 +275,7 @@ export async function improveCertificateTextWithAi(params: ImproveTextParams): P
   const cfg = params.settings || getSavedAISettings();
 
   try {
-    const endpoint = '/api/ai-improve-text';
-    
-    const response = await fetch(endpoint, {
+    const response = await fetch('/api/ai-improve-text', {
       method: 'POST',
       headers: getAIRequestHeaders(cfg),
       body: JSON.stringify({
